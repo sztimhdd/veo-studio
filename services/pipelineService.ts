@@ -301,6 +301,9 @@ CRITICAL RULES:
 export const runShotDraftingAgent = async (shot: ShotParams, plan: DirectorPlan, assets: AssetItem[]): Promise<VideoArtifact> => {
   console.log(`[Engineer] Drafting shot ${shot.order}...`);
 
+  // Stagger start times slightly to avoid hitting rate limits instantly with 3 parallel calls
+  await new Promise(resolve => setTimeout(resolve, shot.order * 2000));
+
   const references: VideoGenerationReferenceImage[] = [];
 
   for (const asset of assets) {
@@ -322,34 +325,61 @@ export const runShotDraftingAgent = async (shot: ShotParams, plan: DirectorPlan,
   const finalPrompt = `Subject: ${plan.subject_prompt}. Environment: ${plan.environment_prompt}. Action: ${shot.prompt}. Camera: ${shot.camera_movement}. Style: ${plan.visual_style}`;
   console.log(`[Engineer] Shot ${shot.order} Prompt: ${finalPrompt}`);
 
-  let operation = await ai.models.generateVideos({
-    model: 'veo-3.1-fast-generate-preview',
-    prompt: finalPrompt,
-    config: {
-      numberOfVideos: 1,
-      resolution: '720p',
-      aspectRatio: '16:9',
-      referenceImages: references
-    }
-  });
+  // Retry loop for transient errors
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      if (attempt > 1) console.log(`[Engineer] Retrying shot ${shot.order} (Attempt ${attempt}/3)...`);
 
-  while (!operation.done) {
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    operation = await ai.operations.getVideosOperation({ operation });
+      let operation = await ai.models.generateVideos({
+        model: 'veo-3.1-fast-generate-preview',
+        prompt: finalPrompt,
+        config: {
+          numberOfVideos: 1,
+          resolution: '720p',
+          aspectRatio: '16:9',
+          referenceImages: references
+        }
+      });
+
+      // Poll for completion
+      while (!operation.done) {
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        operation = await ai.operations.getVideosOperation({ operation });
+      }
+
+      // Check for API-level errors in the operation object
+      if (operation.error) {
+        console.error(`[Engineer] Operation failed for shot ${shot.order}:`, operation.error);
+        throw new Error(`API Error: ${operation.error.message || 'Unknown API error'}`);
+      }
+
+      const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
+      if (!videoUri) {
+        console.error(`[Engineer] No video URI for shot ${shot.order}. Full op:`, JSON.stringify(operation, null, 2));
+        throw new Error(`Generation completed but returned no video. Check safety filters or quota.`);
+      }
+
+      const res = await fetch(`${videoUri}&key=${process.env.API_KEY}`);
+      if (!res.ok) throw new Error(`Failed to fetch video blob: ${res.statusText}`);
+      const blob = await res.blob();
+
+      return {
+        url: URL.createObjectURL(blob),
+        blob,
+        uri: videoUri,
+        shotId: shot.id
+      };
+
+    } catch (e: any) {
+      console.warn(`[Engineer] Attempt ${attempt} failed for shot ${shot.order}:`, e);
+      lastError = e;
+      // Wait before retrying (exponential backoff)
+      await new Promise(resolve => setTimeout(resolve, attempt * 5000));
+    }
   }
 
-  const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
-  if (!videoUri) throw new Error(`Draft generation failed for shot ${shot.order}`);
-
-  const res = await fetch(`${videoUri}&key=${process.env.API_KEY}`);
-  const blob = await res.blob();
-
-  return {
-    url: URL.createObjectURL(blob),
-    blob,
-    uri: videoUri,
-    shotId: shot.id
-  };
+  throw new Error(`Failed to generate shot ${shot.order} after 3 attempts. Last error: ${lastError?.message}`);
 };
 
 /**
