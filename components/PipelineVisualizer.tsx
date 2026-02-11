@@ -49,10 +49,34 @@ const PipelineVisualizer: React.FC = () => {
                         </div>
                     </div>
                     {state.phase === 'COMPLETE' && (
-                        <span className="px-3 py-1 bg-emerald-500/20 text-emerald-400 text-xs rounded-full border border-emerald-500/50">Production Complete</span>
-                    )}
-                    {state.phase === 'ERROR' && (
-                        <span className="px-3 py-1 bg-red-500/20 text-red-400 text-xs rounded-full border border-red-500/50">System Failure</span>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={async () => {
+                                    if (!state.artifacts.shots) return;
+                                    const btn = document.getElementById('export-btn');
+                                    if (btn) btn.innerText = 'Stitching...';
+                                    try {
+                                        const { stitchVideos } = await import('../services/stitchService');
+                                        const { url, extension } = await stitchVideos(state.artifacts.shots);
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.download = `veo_commercial_export.${extension}`;
+                                        a.click();
+                                    } catch (e) {
+                                        console.error(e);
+                                        alert('Stitching failed');
+                                    } finally {
+                                        if (btn) btn.innerText = 'Export Full Commercial';
+                                    }
+                                }}
+                                id="export-btn"
+                                className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-full shadow-lg transition-all flex items-center gap-2">
+                                <FilmIcon className="w-3 h-3" /> Export Full Commercial
+                            </button>
+                            <span className="px-3 py-1 bg-emerald-500/20 text-emerald-400 text-xs rounded-full border border-emerald-500/50 flex items-center">
+                                Production Complete
+                            </span>
+                        </div>
                     )}
                 </div>
 
