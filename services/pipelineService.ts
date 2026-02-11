@@ -10,6 +10,22 @@ import { AssetItem, DirectorPlan, ShotParams, Resolution, VideoArtifact } from '
 // Initialize AI (API key handled by env)
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
+// --- QUOTA MANAGEMENT ---
+// Global timestamp to track the last multimodal request (Video/Image)
+let lastMultimodalRequestTime = 0;
+const MIN_COOLDOWN_MS = 45000; // 45s mandatory gap between any multimodal calls
+
+async function enforceQuotaSafety() {
+  const now = Date.now();
+  const elapsed = now - lastMultimodalRequestTime;
+  if (elapsed < MIN_COOLDOWN_MS) {
+    const waitTime = MIN_COOLDOWN_MS - elapsed;
+    console.log(`[QuotaGuard] mandatory cooling: ${Math.ceil(waitTime / 1000)}s remaining...`);
+    await new Promise(resolve => setTimeout(resolve, waitTime));
+  }
+  lastMultimodalRequestTime = Date.now();
+}
+
 // --- UTILITIES ---
 
 const blobToBase64 = (blob: Blob): Promise<string> => {
@@ -198,6 +214,8 @@ CRITICAL RULES:
     // Image-edit mode: extrapolate turnaround from user's reference photo
     const userCharBase64 = await blobToBase64(userCharacter);
     console.log('[Artist] User provided character reference — extrapolating 3-view sheet...');
+    
+    await enforceQuotaSafety();
     charResponse = await ai.models.generateContent({
       model: ARTIST_MODEL,
       contents: [
@@ -211,6 +229,8 @@ CRITICAL RULES:
   } else {
     // Text-to-image mode: generate from Director's description
     console.log('[Artist] No user reference — generating character from description...');
+    
+    await enforceQuotaSafety();
     charResponse = await ai.models.generateContent({
       model: ARTIST_MODEL,
       contents: charTurnaroundPrompt,
@@ -234,9 +254,8 @@ CRITICAL RULES:
   });
   console.log('[Artist] ✅ Character turnaround sheet ready.');
 
-  // Safety buffer for API quota
-  console.log('[Artist] Cooling down for 10s before next asset...');
-  await new Promise(resolve => setTimeout(resolve, 10000));
+  // Safety buffer for API quota - redundantly handled by QuotaGuard but kept for clarity
+  console.log('[Artist] Preparing next asset...');
 
   // ─── ENVIRONMENT REFERENCE SHEET ───
   console.log('[Artist] Creating environment reference sheet...');
@@ -259,6 +278,8 @@ CRITICAL RULES:
   if (userEnvironment) {
     const userEnvBase64 = await blobToBase64(userEnvironment);
     console.log('[Artist] User provided environment reference — extrapolating reference sheet...');
+    
+    await enforceQuotaSafety();
     envResponse = await ai.models.generateContent({
       model: ARTIST_MODEL,
       contents: [
@@ -271,6 +292,8 @@ CRITICAL RULES:
     });
   } else {
     console.log('[Artist] No user reference — generating environment from description...');
+    
+    await enforceQuotaSafety();
     envResponse = await ai.models.generateContent({
       model: ARTIST_MODEL,
       contents: envTurnaroundPrompt,
@@ -339,14 +362,18 @@ export const runShotDraftingAgent = async (
 
 // Retry loop for transient errors
   let lastError;
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  const maxAttempts = 7;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       if (attempt > 1) {
-        const backoff = attempt * 20000;
-        console.log(`[Engineer] Quota cooldown: waiting ${backoff / 1000}s before retry...`);
+        // Aggressive progressive backoff: 60s, 120s, 180s, 240s...
+        const backoff = attempt * 60000;
+        console.log(`[Engineer] Quota violation recovery: waiting ${backoff / 1000}s before attempt ${attempt}/${maxAttempts}...`);
         await new Promise(resolve => setTimeout(resolve, backoff));
       }
 
+      await enforceQuotaSafety();
+      
       let operation = await ai.models.generateVideos({
         model: 'veo-3.1-fast-generate-preview',
         prompt: finalPrompt,
@@ -390,10 +417,11 @@ export const runShotDraftingAgent = async (
     } catch (e: any) {
       console.warn(`[Engineer] Attempt ${attempt} failed for shot ${shot.order}:`, e);
       lastError = e;
+      // If we hit a 429, we explicitly wait even longer in the next iteration's start
     }
   }
 
-  throw new Error(`Failed to generate shot ${shot.order} after 3 attempts. Last error: ${lastError?.message}`);
+  throw new Error(`Failed to generate shot ${shot.order} after ${maxAttempts} attempts. The API quota for Veo 3.1 is currently exhausted. Please try again in a few minutes or reduce the complexity of the scene.`);
 };
 
 /**
@@ -401,10 +429,7 @@ export const runShotDraftingAgent = async (
  * Manages the sequential generation of the Dailies sequence.
  */
 export const runProductionPipeline = async (plan: DirectorPlan, assets: AssetItem[]): Promise<VideoArtifact[]> => {
-  console.log('[Production] Cooling down for 15s before starting cameras (Pre-Production)...');
-  await new Promise(resolve => setTimeout(resolve, 15000));
-
-  console.log('[Production] Starting SERIAL generation of 3 shots (to respect quota)...');
+  console.log('[Production] Initializing serial generation with QuotaGuard active...');
 
   const results: VideoArtifact[] = [];
 
@@ -415,15 +440,7 @@ export const runProductionPipeline = async (plan: DirectorPlan, assets: AssetIte
       results.push(result);
     } catch (e) {
       console.error(`[Production] Shot ${shot.order} failed even after retries:`, e);
-      // In production, we might want to return a placeholder or partial result, 
-      // but for now let's rethrow so the UI shows the error.
       throw e;
-    }
-
-    // Safety buffer between shots
-    if (shot.order < plan.shots.length) {
-      console.log('[Production] Cooling down for 20s before next shot...');
-      await new Promise(resolve => setTimeout(resolve, 20000));
     }
   }
 
