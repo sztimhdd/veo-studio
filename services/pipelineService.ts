@@ -11,19 +11,18 @@ import { AssetItem, DirectorPlan, ShotParams, Resolution, VideoArtifact } from '
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 // --- QUOTA MANAGEMENT ---
-// Global timestamp to track the last multimodal request (Video/Image)
-let lastMultimodalRequestTime = 0;
-const MIN_COOLDOWN_MS = 45000; // 45s mandatory gap between any multimodal calls
+// Implements Exponential Backoff with Jitter (Best Practice for Gemini API)
+
+// Calculate delay: 1000ms * 2^attempt +/- 20% jitter, capped at 60s
+function getRetryDelay(attempt: number): number {
+  const baseDelay = 1000 * Math.pow(2, attempt);
+  const jitter = baseDelay * 0.2 * (Math.random() * 2 - 1); // +/- 20% random jitter
+  return Math.min(Math.max(baseDelay + jitter, 500), 60000); // Clamp between 0.5s and 60s
+}
 
 async function enforceQuotaSafety() {
-  const now = Date.now();
-  const elapsed = now - lastMultimodalRequestTime;
-  if (elapsed < MIN_COOLDOWN_MS) {
-    const waitTime = MIN_COOLDOWN_MS - elapsed;
-    console.log(`[QuotaGuard] mandatory cooling: ${Math.ceil(waitTime / 1000)}s remaining...`);
-    await new Promise(resolve => setTimeout(resolve, waitTime));
-  }
-  lastMultimodalRequestTime = Date.now();
+  // Small grace period to prevent thundering herd
+  await new Promise(resolve => setTimeout(resolve, 1000));
 }
 
 // --- UTILITIES ---
@@ -362,14 +361,13 @@ export const runShotDraftingAgent = async (
 
 // Retry loop for transient errors
   let lastError;
-  const maxAttempts = 7;
+  const maxAttempts = 5;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       if (attempt > 1) {
-        // Aggressive progressive backoff: 60s, 120s, 180s, 240s...
-        const backoff = attempt * 60000;
-        console.log(`[Engineer] Quota violation recovery: waiting ${backoff / 1000}s before attempt ${attempt}/${maxAttempts}...`);
-        await new Promise(resolve => setTimeout(resolve, backoff));
+        const delay = getRetryDelay(attempt);
+        console.log(`[Engineer] Retry ${attempt}/${maxAttempts}: waiting ${Math.ceil(delay/1000)}s (with jitter)...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
 
       await enforceQuotaSafety();
@@ -421,7 +419,7 @@ export const runShotDraftingAgent = async (
     }
   }
 
-  throw new Error(`Failed to generate shot ${shot.order} after ${maxAttempts} attempts. The API quota for Veo 3.1 is currently exhausted. Please try again in a few minutes or reduce the complexity of the scene.`);
+  throw new Error(`Failed to generate shot ${shot.order} after ${maxAttempts} attempts. The API quota limit has been reached.`);
 };
 
 /**

@@ -62,8 +62,9 @@ interface EvalReport {
 *   **Task:** Frame-by-frame analysis and quality gate enforcement.
 
 ## 4. Engineering Constraints & Stability
-*   **Sequential Pipeline (QuotaGuard):** Implements a mandatory 30s gap between any multimodal (Image/Video) API calls.
-*   **Progressive Backoff:** Automated retry mechanism with 5 attempts and expanding cooldowns (up to 4 minutes) to handle persistent `429 Resource Exhausted` errors.
+*   **Sequential Pipeline (QuotaGuard):** Implements **Exponential Backoff with Jitter** to handle `429 Resource Exhausted` errors gracefully.
+    *   **Retry Strategy:** 5 attempts with increasing delays (1s, 2s, 4s, 8s...) capped at 60s.
+    *   **Jitter:** +/- 20% random variance prevents "thundering herd" retry storms.
 *   **State Persistence:** Use of `ProductionContext` to hold the "Bible" and "Film Strip" across the DAG phases.
 *   **Cleanup:** Automated revocation of ObjectURLs to prevent memory leaks during long-running refinement loops.
 

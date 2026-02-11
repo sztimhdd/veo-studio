@@ -33,8 +33,10 @@ The production environment uses `node:20-alpine`.
 ### 3.2. Sequential Pipeline (Quota Safety)
 The API has strict quotas (`429 Resource Exhausted`). 
 - **RULE:** All video/image generation MUST pass through `enforceQuotaSafety()`.
-- **RULE:** Maintain a mandatory **30s gap** between any multimodal calls.
-- **RULE:** Use progressive backoff for retries: 5 attempts with (attempt * 60s) wait times.
+- **RULE:** Use **Exponential Backoff with Jitter** for retries.
+    - Delay = `1000ms * 2^attempt` +/- 20% jitter.
+    - Max delay capped at 60s.
+- **RULE:** Maximum 5 retry attempts per shot.
 
 ## 4. Logical Structure
 - `src/services/pipelineService.ts`: The core orchestrator.
