@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 import { GoogleGenAI, Type, Schema, VideoGenerationReferenceImage, VideoGenerationReferenceType } from '@google/genai';
-import { AssetItem, DirectorPlan, Resolution, VideoArtifact } from '../types';
+import { AssetItem, DirectorPlan, ShotParams, Resolution, VideoArtifact } from '../types';
+
 
 // Initialize AI (API key handled by env)
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -32,7 +33,7 @@ export const extractFrameFromBlob = async (videoBlob: Blob, timeOffset: number =
   return new Promise((resolve, reject) => {
     const video = document.createElement('video');
     const url = URL.createObjectURL(videoBlob);
-    
+
     video.src = url;
     video.muted = true;
     video.playsInline = true;
@@ -54,9 +55,9 @@ export const extractFrameFromBlob = async (videoBlob: Blob, timeOffset: number =
         canvas.height = video.videoHeight;
         const ctx = canvas.getContext('2d');
         if (!ctx) throw new Error('Could not get 2D context');
-        
+
         ctx.drawImage(video, 0, 0);
-        
+
         canvas.toBlob((blob) => {
           cleanup();
           if (blob) resolve(blob);
@@ -82,53 +83,76 @@ export const extractFrameFromBlob = async (videoBlob: Blob, timeOffset: number =
  * Deconstructs the user prompt into a production plan.
  */
 export const runDirectorAgent = async (userPrompt: string): Promise<DirectorPlan> => {
-  console.log('[Director] Planning shot...');
-  
+  console.log('[Director] Planning production...');
+
   const schema: Schema = {
     type: Type.OBJECT,
     properties: {
-      subject_prompt: { type: Type.STRING, description: "Detailed visual description of the main character or subject" },
-      environment_prompt: { type: Type.STRING, description: "Detailed visual description of the background and lighting" },
-      action_prompt: { type: Type.STRING, description: "The specific movement, camera angle, and action occurring" },
-      visual_style: { type: Type.STRING, description: "Cinematic style, film stock, lens type" },
-      reasoning: { type: Type.STRING, description: "Brief explanation of creative choices" }
+      subject_prompt: { type: Type.STRING, description: "Detailed visual description of the main character or subject. This will be used as a reference." },
+      environment_prompt: { type: Type.STRING, description: "Detailed visual description of the background and atmosphere." },
+      visual_style: { type: Type.STRING, description: "Cinematic style, lighting, and camera lens details (e.g., 'shot on 35mm film, volumetric lighting')." },
+      shots: {
+        type: Type.ARRAY,
+        description: "A sequence of 3 distinct shots that tell the story.",
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            id: { type: Type.STRING },
+            order: { type: Type.NUMBER },
+            prompt: { type: Type.STRING, description: "Action occurring in this specific shot." },
+            camera_movement: { type: Type.STRING, description: "Specific camera instructions (e.g., 'Slow zoom in', 'Pan left to right', 'Low angle static')." },
+            duration_seconds: { type: Type.NUMBER, description: "Each shot must be 5 seconds." }
+
+          },
+          required: ["id", "order", "prompt", "camera_movement", "duration_seconds"]
+        }
+      },
+      reasoning: { type: Type.STRING, description: "Brief explanation of the shot sequence and creative flow." }
     },
-    required: ["subject_prompt", "environment_prompt", "action_prompt", "visual_style", "reasoning"]
+    required: ["subject_prompt", "environment_prompt", "visual_style", "shots", "reasoning"]
   };
 
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
-    contents: `You are a visionary film director. Break down this user request into a precise production plan: "${userPrompt}"`,
+    contents: `You are a visionary film director and cinematographer. 
+               Your task is to break down this narrative into a 3-shot "Dailies" sequence: "${userPrompt}".
+               
+               Guidelines:
+               1. Character/Subject must be consistent across all shots.
+               2. The Environment should remain stable but can be seen from different angles.
+               3. Vary the camera angles (e.g., Wide, Medium, Close-up) to make the sequence dynamic.
+               4. Each shot must be exactly 5 seconds.
+               `,
     config: {
       responseMimeType: 'application/json',
       responseSchema: schema,
-      systemInstruction: "You are an expert filmmaker. Create distinct, vivid prompts for the Art Department (Assets) and the Camera Department (Action). Ensure consistency in style."
+      systemInstruction: "You are an expert filmmaker at a top studio. You produce high-end, cinematic production plans in JSON format."
     }
   });
 
   const text = response.text;
   if (!text) throw new Error("Director returned empty plan");
-  
+
   return JSON.parse(text) as DirectorPlan;
 };
 
+
 /**
  * ARTIST AGENT (Gemini 2.5 Flash Image)
- * Generates the raw visual assets based on the Director's plan.
+ * Generates the raw visual assets based on the Director's plan, or uses user-provided ones.
  */
-export const runArtistAgent = async (plan: DirectorPlan): Promise<AssetItem[]> => {
-  console.log('[Artist] Generating assets...');
+export const runArtistAgent = async (plan: DirectorPlan, userCharacter?: Blob, userEnvironment?: Blob): Promise<AssetItem[]> => {
+  console.log('[Artist] Preparing assets...');
 
+  const assets: AssetItem[] = [];
+
+  // Helper to generate missing assets
   const generateAsset = async (prompt: string, type: 'character' | 'background'): Promise<AssetItem> => {
-    // Generate the image
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-image',
       contents: `Create a ${type} asset. Style: ${plan.visual_style}. Description: ${prompt}. High quality, detailed, production ready.`,
     });
 
-    // Extract image data
-    // Note: 2.5 Flash Image usually returns inlineData. 
-    // We need to iterate parts to find it.
     let base64Data = '';
     const parts = response.candidates?.[0]?.content?.parts || [];
     for (const part of parts) {
@@ -140,7 +164,6 @@ export const runArtistAgent = async (plan: DirectorPlan): Promise<AssetItem[]> =
 
     if (!base64Data) throw new Error(`Artist failed to generate ${type} image`);
 
-    // Convert to Blob for storage
     const byteCharacters = atob(base64Data);
     const byteNumbers = new Array(byteCharacters.length);
     for (let i = 0; i < byteCharacters.length; i++) {
@@ -154,25 +177,46 @@ export const runArtistAgent = async (plan: DirectorPlan): Promise<AssetItem[]> =
       type,
       url: URL.createObjectURL(blob),
       blob,
-      base64: base64Data
+      base64: base64Data,
+      source: 'ai'
     };
   };
 
-  // Run in parallel
-  const [charAsset, bgAsset] = await Promise.all([
-    generateAsset(plan.subject_prompt, 'character'),
-    generateAsset(plan.environment_prompt, 'background')
-  ]);
+  // Process Character
+  if (userCharacter) {
+    assets.push({
+      id: crypto.randomUUID(),
+      type: 'character',
+      url: URL.createObjectURL(userCharacter),
+      blob: userCharacter,
+      source: 'user'
+    });
+  } else {
+    assets.push(await generateAsset(plan.subject_prompt, 'character'));
+  }
 
-  return [charAsset, bgAsset];
+  // Process Environment
+  if (userEnvironment) {
+    assets.push({
+      id: crypto.randomUUID(),
+      type: 'background',
+      url: URL.createObjectURL(userEnvironment),
+      blob: userEnvironment,
+      source: 'user'
+    });
+  } else {
+    assets.push(await generateAsset(plan.environment_prompt, 'background'));
+  }
+
+  return assets;
 };
 
 /**
  * ENGINEER AGENT - PHASE 1: DRAFT (Veo 3.1 Fast)
- * Generates the initial motion draft using assets.
+ * Generates the motion for a SPECIFIC SHOT using the shared assets.
  */
-export const runDraftingAgent = async (plan: DirectorPlan, assets: AssetItem[]): Promise<VideoArtifact> => {
-  console.log('[Engineer] Drafting motion...');
+export const runShotDraftingAgent = async (shot: ShotParams, plan: DirectorPlan, assets: AssetItem[]): Promise<VideoArtifact> => {
+  console.log(`[Engineer] Drafting shot ${shot.order}...`);
 
   const references: VideoGenerationReferenceImage[] = [];
 
@@ -186,15 +230,15 @@ export const runDraftingAgent = async (plan: DirectorPlan, assets: AssetItem[]):
         mimeType: 'image/png'
       },
       // Use ASSET for character to keep consistency, STYLE for BG to allow camera movement
-      referenceType: asset.type === 'character' 
-        ? VideoGenerationReferenceType.ASSET 
+      referenceType: asset.type === 'character'
+        ? VideoGenerationReferenceType.ASSET
         : VideoGenerationReferenceType.STYLE
     });
   }
 
   let operation = await ai.models.generateVideos({
     model: 'veo-3.1-fast-generate-preview',
-    prompt: `${plan.action_prompt}. Style: ${plan.visual_style}`,
+    prompt: `${shot.prompt}. ${shot.camera_movement}. Style: ${plan.visual_style}`,
     config: {
       numberOfVideos: 1,
       resolution: '720p',
@@ -209,18 +253,32 @@ export const runDraftingAgent = async (plan: DirectorPlan, assets: AssetItem[]):
   }
 
   const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
-  if (!videoUri) throw new Error("Draft generation failed");
+  if (!videoUri) throw new Error(`Draft generation failed for shot ${shot.order}`);
 
-  // Fetch the actual video blob
   const res = await fetch(`${videoUri}&key=${process.env.API_KEY}`);
   const blob = await res.blob();
 
   return {
     url: URL.createObjectURL(blob),
     blob,
-    uri: videoUri
+    uri: videoUri,
+    shotId: shot.id
   };
 };
+
+/**
+ * PRODUCTION PIPELINE (Parallelization)
+ * Manages the parallel generation of the Dailies sequence.
+ */
+export const runProductionPipeline = async (plan: DirectorPlan, assets: AssetItem[]): Promise<VideoArtifact[]> => {
+  console.log('[Production] Starting parallel generation of 3 shots...');
+
+  // Fire all 3 shots in parallel
+  const shotPromises = plan.shots.map(shot => runShotDraftingAgent(shot, plan, assets));
+
+  return Promise.all(shotPromises);
+};
+
 
 /**
  * ENGINEER AGENT - PHASE 2: REFINE (Gemini 3 Pro Vision)
@@ -230,6 +288,7 @@ export const runRefinerAgent = async (lowResBlob: Blob, plan: DirectorPlan): Pro
   console.log('[Engineer] Refining anchor frame...');
 
   const lowResBase64 = await blobToBase64(lowResBlob);
+  const actionPrompt = plan.shots?.[0]?.prompt || "Action occurring in the scene";
 
   // Use Gemini 3 Pro to Hallucinate details (Upscale)
   const response = await ai.models.generateContent({
@@ -240,9 +299,11 @@ export const runRefinerAgent = async (lowResBlob: Blob, plan: DirectorPlan): Pro
           text: `A high-resolution, 4k, photorealistic movie still. 
                  Subject: ${plan.subject_prompt}. 
                  Environment: ${plan.environment_prompt}. 
+                 Action: ${actionPrompt}.
                  Style: ${plan.visual_style}.
                  Strictly maintain the composition and pose of the reference image, but enhance textures, lighting, and details.`
         },
+
         {
           inlineData: {
             mimeType: 'image/jpeg',
@@ -252,7 +313,7 @@ export const runRefinerAgent = async (lowResBlob: Blob, plan: DirectorPlan): Pro
       ]
     },
     config: {
-        // We let the model decide parameters for optimal image gen
+      // We let the model decide parameters for optimal image gen
     }
   });
 
@@ -260,10 +321,10 @@ export const runRefinerAgent = async (lowResBlob: Blob, plan: DirectorPlan): Pro
   let highResBase64 = '';
   // Check candidates for image
   for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-          highResBase64 = part.inlineData.data;
-          break;
-      }
+    if (part.inlineData) {
+      highResBase64 = part.inlineData.data;
+      break;
+    }
   }
 
   if (!highResBase64) throw new Error("Refiner failed to generate high-res frame");
@@ -274,7 +335,7 @@ export const runRefinerAgent = async (lowResBlob: Blob, plan: DirectorPlan): Pro
     byteNumbers[i] = byteCharacters.charCodeAt(i);
   }
   const byteArray = new Uint8Array(byteNumbers);
-  
+
   return new Blob([byteArray], { type: 'image/png' });
 };
 
@@ -286,10 +347,12 @@ export const runMasteringAgent = async (plan: DirectorPlan, anchorFrameBlob: Blo
   console.log('[Engineer] Rendering final master...');
 
   const anchorBase64 = await blobToBase64(anchorFrameBlob);
+  const actionPrompt = plan.shots?.[0]?.prompt || "Action occurring in the scene";
 
   let operation = await ai.models.generateVideos({
     model: 'veo-3.1-generate-preview', // High quality model
-    prompt: `${plan.action_prompt}. ${plan.visual_style}. High Fidelity.`,
+    prompt: `${actionPrompt}. ${plan.visual_style}. High Fidelity.`,
+
     config: {
       numberOfVideos: 1,
       resolution: '1080p',
@@ -297,8 +360,8 @@ export const runMasteringAgent = async (plan: DirectorPlan, anchorFrameBlob: Blo
       referenceImages: [
         {
           image: {
-             imageBytes: anchorBase64,
-             mimeType: 'image/png'
+            imageBytes: anchorBase64,
+            mimeType: 'image/png'
           },
           // Using ASSET here locks the visual fidelity strongly to our upscaled frame
           referenceType: VideoGenerationReferenceType.ASSET

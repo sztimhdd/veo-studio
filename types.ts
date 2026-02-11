@@ -3,7 +3,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
-import {Video} from '@google/genai';
+import { Video } from '@google/genai';
 
 export enum AppState {
   IDLE,
@@ -62,21 +62,29 @@ export interface GenerateVideoParams {
 
 // --- AGENTIC PIPELINE TYPES ---
 
-export type PipelinePhase = 
-  | 'IDLE' 
+export type PipelinePhase =
+  | 'IDLE'
   | 'PLANNING'      // Director Agent
   | 'ASSET_GEN'     // Material Agent
   | 'DRAFTING'      // Veo Fast
   | 'REFINING'      // Frame Extraction + Gemini Pro Vision Upscale
   | 'RENDERING'     // Veo High Quality
-  | 'COMPLETE' 
+  | 'COMPLETE'
   | 'ERROR';
+
+export interface ShotParams {
+  id: string;
+  order: number;
+  prompt: string;
+  camera_movement: string;
+  duration_seconds: number;
+}
 
 export interface DirectorPlan {
   subject_prompt: string;
   environment_prompt: string;
-  action_prompt: string;
   visual_style: string;
+  shots: ShotParams[];
   reasoning: string;
 }
 
@@ -86,18 +94,21 @@ export interface AssetItem {
   url: string; // ObjectURL for UI
   blob: Blob;  // For API
   base64?: string; // Cache
+  source: 'user' | 'ai'; // Added to track source as per TDD
 }
 
 export interface VideoArtifact {
   url: string;
   blob: Blob;
   uri?: string; // The Google API URI
+  shotId?: string; // Link back to the shot params
 }
 
 export interface ProductionArtifacts {
   plan: DirectorPlan | null;
-  assets: AssetItem[];
-  draftVideo: VideoArtifact | null;
+  assets: AssetItem[]; // The "Bible"
+  shots: VideoArtifact[]; // The "Dailies" (Film Strip)
+  draftVideo: VideoArtifact | null; // Keep for backward compatibility/Single-shot mode
   anchorFrame: {
     original: string; // ObjectURL of the low-res frame
     upscaled: string; // ObjectURL of the high-res frame
@@ -105,6 +116,7 @@ export interface ProductionArtifacts {
   } | null;
   finalVideo: VideoArtifact | null;
 }
+
 
 export interface LogEntry {
   timestamp: number;
