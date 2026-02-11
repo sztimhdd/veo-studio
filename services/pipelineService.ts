@@ -387,12 +387,30 @@ export const runShotDraftingAgent = async (shot: ShotParams, plan: DirectorPlan,
  * Manages the parallel generation of the Dailies sequence.
  */
 export const runProductionPipeline = async (plan: DirectorPlan, assets: AssetItem[]): Promise<VideoArtifact[]> => {
-  console.log('[Production] Starting parallel generation of 3 shots...');
+  console.log('[Production] Starting SERIAL generation of 3 shots (to respect quota)...');
 
-  // Fire all 3 shots in parallel
-  const shotPromises = plan.shots.map(shot => runShotDraftingAgent(shot, plan, assets));
+  const results: VideoArtifact[] = [];
 
-  return Promise.all(shotPromises);
+  for (const shot of plan.shots) {
+    // Run sequentially
+    try {
+      const result = await runShotDraftingAgent(shot, plan, assets);
+      results.push(result);
+    } catch (e) {
+      console.error(`[Production] Shot ${shot.order} failed even after retries:`, e);
+      // In production, we might want to return a placeholder or partial result, 
+      // but for now let's rethrow so the UI shows the error.
+      throw e;
+    }
+
+    // Safety buffer between shots
+    if (shot.order < plan.shots.length) {
+      console.log('[Production] Cooling down for 5s before next shot...');
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+  }
+
+  return results;
 };
 
 

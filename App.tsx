@@ -135,6 +135,44 @@ const StudioContent: React.FC<{
               Exit Studio
             </button>
             <button
+              onClick={async () => {
+                const fileToImageFile = (file: File): Promise<ImageFile> => {
+                  return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      const base64 = (reader.result as string).split(',')[1];
+                      if (base64) resolve({ file, base64 });
+                      else reject(new Error('Failed to read file'));
+                    };
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                  });
+                };
+
+                try {
+                  const belleRes = await fetch('/test/Belle.png');
+                  const envRes = await fetch('/test/env.jpg');
+
+                  if (!belleRes.ok || !envRes.ok) throw new Error('Test assets not found in /public/test/');
+
+                  const belleBlob = await belleRes.blob();
+                  const envBlob = await envRes.blob();
+
+                  const belleFile = new File([belleBlob], 'Belle.png', { type: 'image/png' });
+                  const envFile = new File([envBlob], 'env.jpg', { type: 'image/jpeg' });
+
+                  setUserCharacter(await fileToImageFile(belleFile));
+                  setUserEnvironment(await fileToImageFile(envFile));
+                  setPrompt("Create a 10-second cat food commercial. The main character is a fluffy white cat named Belle. Start with Belle looking hungry and meowing at an empty bowl. She discovers a can of premium cat food opening, with steam rising and chunks of meat visible. Belle eats happily, purring and licking her lips. End with text overlay: 'Belle loves [Brand] Cat Food – Nutritious and Delicious!' Upbeat music, vibrant colors, smooth animation.");
+                } catch (e) {
+                  console.error("Failed to load test set:", e);
+                  alert("Failed to load test set. Make sure /public/test/Belle.png and env.jpg exist.");
+                }
+              }}
+              className="px-6 py-3 rounded-full text-indigo-400 border border-indigo-500/30 hover:bg-indigo-500/10 transition-all font-medium text-sm">
+              Test Set
+            </button>
+            <button
               onClick={startPipeline}
               disabled={!prompt.trim()}
               className="px-10 py-4 bg-white text-black hover:bg-indigo-50 font-bold rounded-full shadow-[0_0_20px_rgba(255,255,255,0.3)] hover:shadow-[0_0_30px_rgba(255,255,255,0.5)] transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none flex items-center gap-2">
