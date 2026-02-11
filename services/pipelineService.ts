@@ -129,19 +129,39 @@ export const runDirectorAgent = async (userPrompt: string): Promise<DirectorPlan
 
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
-    contents: `You are a visionary film director and cinematographer. 
-               Your task is to break down this narrative into a 3-shot "Dailies" sequence: "${userPrompt}".
+    contents: `You are an expert Film Director and Cinematographer.
+               Your task is to break down this user narrative into a 3-shot "Dailies" sequence for Veo 3.1 video generation.
+               User Prompt: "${userPrompt}"
                
-               Guidelines:
-               1. Character/Subject must be consistent across all shots.
-               2. The Environment should remain stable but can be seen from different angles.
-               3. Vary the camera angles (e.g., Wide, Medium, Close-up) to make the sequence dynamic.
-               4. Each shot must be exactly 5 seconds.
+               *** CRITICAL: VEO 3.1 PROMPTING STANDARDS ***
+               You must generate HIGH-FIDELITY prompts using the specific 5-PART FORMULA:
+               [1. Cinematography] + [2. Subject] + [3. Action] + [4. Context] + [5. Style & Ambiance]
+
+               GUIDELINES:
+               1. **Cinematography:** Specify Shot Type (Wide, Medium, Close-up), Camera Angle (Eye-level, Low-angle), and Movement (Pan, Tilt, Dolly, Static).
+               2. **Subject Consistency:** Use the EXACT SAME detailed physical description for the main character in EVERY shot to prevent identity drift.
+               3. **Audio:** Veo 3.1 generates audio. Include specific audio cues (Dialogue, SFX, Ambient) in the prompt.
+                  - Format: "SFX: thunder cracks.", "Ambient: busy street noise."
+               4. **Lighting & Style:** Define the lighting (e.g., "Cinematic lighting, volumetric fog, teal and orange palette").
+               5. **Structure:** The environment must remain consistent (same location) but viewed from different angles.
+               6. **Duration:** Each shot is exactly 5 seconds.
                `,
     config: {
       responseMimeType: 'application/json',
       responseSchema: schema,
-      systemInstruction: "You are an expert filmmaker. Create a JSON production plan. CRITICAL: 1. Ensure the 'subject_prompt' and 'environment_prompt' are DETAILED. 2. In each 'shot', describe the action clearly. 3. Ensure the sequence appears to be shot in the EXACT SAME location with the EXACT SAME characters."
+      systemInstruction: `You are a Meta-Prompting Engine for Google Veo 3.1.
+      
+      Your goal is to output a JSON production plan where EACH 'prompt' field is a standalone, professional-grade video prompt following this formula:
+      "[Camera Movement], [Shot Type]. [Subject Description]. [Action]. [Environment/Context]. [Lighting/Style]. [Audio Cues]."
+
+      EXAMPLE PROMPT OUTPUT:
+      "Low angle, slow dolly in. A weathered cyber-samurai with neon blue dreadlocks and scarred chrome skin stands stoically. He slowly unsheathes a glowing katana, rain dripping from the blade. A grimy neon-lit alleyway in Neo-Tokyo at midnight, heavy rain falling. High contrast cyberpunk aesthetic, wet surfaces, lens flare. SFX: Rain hitting pavement, metallic sheath scrape."
+
+      CRITICAL:
+      - The 'subject_prompt' field must be a reusable Character Bible entry.
+      - The 'environment_prompt' field must be a reusable Location Bible entry.
+      - In the 'shots' array, every 'prompt' MUST include the full subject description again to ensure the video model doesn't hallucinate a new person.
+      `
     }
   });
 
@@ -351,8 +371,18 @@ export const runShotDraftingAgent = async (
     });
   }
 
-  let finalPrompt = `Subject: ${plan.subject_prompt}. Environment: ${plan.environment_prompt}. Action: ${shot.prompt}. Camera: ${shot.camera_movement}. Style: ${plan.visual_style}`;
+  let finalPrompt = `${shot.prompt}. Camera: ${shot.camera_movement}.`;
   
+  // If the Director agent followed instructions, shot.prompt already contains subject/env details.
+  // But to be safe and enforce the 5-part formula, we can reconstruct it if needed.
+  // Ideally, the Director output is already perfect. 
+  // Let's prepend the "style" from the plan just in case it wasn't fully captured, 
+  // but avoid duplication if the prompt is already long.
+  
+  if (!finalPrompt.includes(plan.visual_style)) {
+    finalPrompt += ` Style: ${plan.visual_style}.`;
+  }
+
   if (feedback) {
     finalPrompt = `CRITICAL DIRECTOR NOTE: ${feedback}. ${finalPrompt}`;
   }
