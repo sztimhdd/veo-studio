@@ -1,0 +1,140 @@
+graph TD
+    %% ---------- 全局样式与角色族定义 ----------
+    classDef planner fill:#e1f5fe,stroke:#01579b,stroke-width:3px,stroke-dasharray: 5 5;
+    classDef executor fill:#f3e5f5,stroke:#4a148c,stroke-width:2px;
+    classDef critic fill:#fff9c4,stroke:#fbc02d,stroke-width:2px;
+    classDef api fill:#e8f5e9,stroke:#1b5e20,stroke-width:1px;
+    classDef asset fill:#fff3e0,stroke:#e65100,stroke-width:1px,stroke-dasharray: 3 3;
+    classDef memory fill:#ffebcc,stroke:#bf360c,stroke-width:2px,stroke-dasharray: 8 8;
+
+    %% ========== 阶段0：启动与分层记忆系统（参考UniVA记忆架构）==========
+    Start(("🎬 用户需求输入"))
+    Start -->|"Input: {raw_text: string, ref_images?: url[], brand_guidelines?: pdf}"| IntentParser
+
+    subgraph Memory_System [分层记忆系统·Long-term Memory]
+        direction LR
+        GlobalKB[(🌍 全局知识库<br/>影视语法/广告法规)]:::memory
+        TaskContext[(📋 任务上下文<br/>当前分镜/角色银行)]:::memory
+        UserPref[(👤 用户偏好记忆<br/>风格/历史反馈)]:::memory
+    end
+
+    IntentParser[🤖 Planner Agent<br/>意图分解器]:::planner
+    IntentParser -->|"Output: structured_brief: {narrative_goal, key_visuals, target_duration}"| DirectorPlanner
+    IntentParser <-->|读写: 用户历史风格| UserPref
+
+    %% ========== 阶段1：结构化预生产（Google ADK / MovieAgent范式）==========
+    DirectorPlanner[🤖 Director Agent<br/>总导演智能体]:::planner
+    DirectorPlanner -->|"读: 全局知识库+任务上下文"| GlobalKB
+    DirectorPlanner -->|"读: 品牌角色银行"| TaskContext
+    
+    DirectorPlanner -->|"Output1: Script_JSON {scenes:[], shot_table:[], character_bank, camera_moves}"| ScriptAsset[📄 结构化剧本]:::asset
+    DirectorPlanner -->|"Output2: Initial_Prompt_Templates {scene_id: prompt_template}"| PromptTemplateAsset[📝 初始提示词模板]:::asset
+    DirectorPlanner -->|"Output3: Material_Requirements {missing_anchors:[人物, 场景]}"| MaterialReqAsset[📦 素材需求清单]:::asset
+
+    %% 显式成本预估节点（新增，工程落地关键）
+    ScriptAsset --> CostEstimator[💰 成本预估与早停仲裁器]:::critic
+    CostEstimator -->|"Input: duration, iteration_policy, model_tier"| UserConfirm{用户确认预算?}
+    UserConfirm -->|Yes| MaterialGen
+
+    %% ========== 阶段2：多智能体执行层（MCP工具服务器架构·UniVA/Mora）==========
+    subgraph Phase2_Execution [多智能体执行集群 · MCP Tool Servers]
+        direction TB
+        
+        %% 智能体1：素材生成器（Nano Banana Pro）
+        MaterialGen[🎨 Executor: 素材生成器<br/>Nano Banana Pro]:::executor
+        MaterialReqAsset --> MaterialGen
+        MaterialGen -->|"Output: Asset_Pack_V1 {images:[{id, url, latent}], videos:[{id, url}]}"| AssetPackV1[📁 初始素材包]:::asset
+        
+        %% 智能体2：提示词工程师（Claude 3.7 - 结构化改写）
+        PromptEngineer[✍️ Executor: 提示词工程师<br/>Claude 3.7]:::executor
+        PromptTemplateAsset --> PromptEngineer
+        AssetPackV1 --> PromptEngineer
+        PromptEngineer -->|"Output: Optimized_Prompts {scene_id: prompt_with_@ref, negative_prompt, seed_space}"| OptimizedPromptAsset[🔖 优化提示词集]:::asset
+        
+        %% 智能体3：低清预演生成器（Seedance 1.0 lite）
+        SeedanceBatch[🎬 Executor: 预演生成器<br/>Seedance 1.0 lite]:::executor
+        OptimizedPromptAsset --> SeedanceBatch
+        AssetPackV1 --> SeedanceBatch
+        SeedanceBatch -->|"Output: Draft_Videos {variants:[{variant_id, url, seed, latency}]}"| DraftVideosAsset[🎞️ 低清草稿组<br/>4-6变体]:::asset
+    end
+
+    %% ========== 阶段3：连续性监督与锁定骨架（Google ADK核心贡献）==========
+    subgraph Phase3_Critic [连续性监督与骨架锁定]
+        ContinuitySupervisor[🔍 Critic: 连续性监督员<br/>Gemini 3 Pro + Video-Bench]:::critic
+        DraftVideosAsset --> ContinuitySupervisor
+        AssetPackV1 --> ContinuitySupervisor
+        
+        ContinuitySupervisor -->|"Output: Eval_Report {variant_scores, temporal_consistency_score, semantic_alignment, flaws:[{timestamp, type}]}"| ScoreReport[📊 多维度质检报告]:::asset
+        
+        MotionLock[⚖️ 决策: 骨架锁定]:::critic
+        ScoreReport --> MotionLock
+        MotionLock -->|"Yes + best_variant_id"| LockedSkeleton[🔒 锁定骨架视频<br/>+ 对应种子]:::asset
+        MotionLock -->|"No + feedback_data"| PlannerFeedback[↩️ 反馈回路→Director]:::planner
+    end
+
+    %% 反馈回路
+    PlannerFeedback --> DirectorPlanner
+
+    %% ========== 阶段4：锚点帧高清重绘与一致性锁层 ==========
+    subgraph Phase4_Refinement [减熵重绘与一致性注入]
+        ExtractKeyframes[🖼️ 工具: 智能关键帧抽取<br/>基于场景切分+运动峰值]:::api
+        LockedSkeleton --> ExtractKeyframes
+        ExtractKeyframes -->|"Output: Keyframes {frame_id, timestamp, low_res_url}"| LowResFrames[🖼️ 低清锚点帧组]:::asset
+        
+        NanoRedraw[🎨 Executor: 高清重绘器<br/>Nano Banana Pro + Set-of-Marks]:::executor
+        LowResFrames --> NanoRedraw
+        NanoRedraw -->|"Output: HighRes_Anchors {frame_id, 4k_url, style_latent}"| HighResFrames[🖼️ 高清锚点帧组<br/>4K]:::asset
+        
+        %% 一致性校验子智能体（新增：防风格漂移）
+        ConsistencyChecker[🧪 Critic: 特征一致性校验器]:::critic
+        HighResFrames --> ConsistencyChecker
+        LockedSkeleton --> ConsistencyChecker
+        ConsistencyChecker -->|"Output: Similarity_Report {cosine_sim>=0.92? pass/fail, drift_map}"| ConsistencyPass{特征相似度达标?}
+        ConsistencyPass -->|No| NanoRedraw
+    end
+
+    %% ========== 阶段5：影视级成片渲染（Veo 3.1 + 多模态条件）==========
+    subgraph Phase5_FinalRender [约束渲染与影视级输出]
+        Combiner[🧩 Executor: 多模态条件组装器<br/>Gemini 3 Pro]:::executor
+        LockedSkeleton --> Combiner
+        HighResFrames --> Combiner
+        OptimizedPromptAsset --> Combiner
+        
+        Combiner -->|"Output: Veo_Payload {ingredients:[anchor_img_IDs], motion_guidance:video_ID, prompt, audio_style}"| VeoPayload[📦 Veo 3.1 输入包]:::asset
+        
+        VeoRender[🎬 核心渲染引擎<br/>Veo 3.1 / Veo 3.2]:::api
+        VeoPayload --> VeoRender
+        VeoRender -->|"Output: Final_Candidate {video_url, srt_captions, audio_track}"| CandidateVideo[🎥 候选成片]:::asset
+        
+        %% 音频/配乐智能体（可选）
+        ComposerAgent[🎵 Executor: 配乐师<br/>Lyria / Piapi]:::executor
+        ScriptAsset --> ComposerAgent
+        ComposerAgent -->|"Output: Generated_Audio {bgm_url, voiceover_url}"| AudioAsset[🎧 音频素材]:::asset
+        AudioAsset --> VeoRender
+    end
+
+    %% ========== 阶段6：终版质检与闭环迭代（人机协同）==========
+    subgraph Phase6_QA [终版质检与发布决策]
+        FinalInspector[🔬 Critic: 终版质检员<br/>Gemini 3 Pro + VQ-Insight]:::critic
+        CandidateVideo --> FinalInspector
+        ScriptAsset --> FinalInspector
+        
+        FinalInspector -->|"Output: QA_Report {overall_score, temporal_consistency, character_fidelity, artifacts:[{frame, type}]}"| FinalReport[📋 终版质检报告]:::asset
+        
+        QualityGate[⚖️ 质量门禁决策]:::critic
+        FinalReport --> QualityGate
+        
+        QualityGate -->|"Yes (score>=8.5)"| Deliver[✅ 交付与多平台发布]:::executor
+        QualityGate -->|"No - 局部瑕疵"| LocalFix[🔁 局部重绘回路<br/>→ 指定帧重绘]:::critic
+        QualityGate -->|"No - 全局结构"| GlobalFix[🔄 全局剧本回路<br/>→ 导演智能体]:::planner
+    end
+
+    LocalFix --> NanoRedraw
+    GlobalFix --> DirectorPlanner
+    
+    Deliver -->|"Output: {final_video_url, frame_accurate_captions, compliance_report}"| Client[📱 客户/平台]
+
+    %% 关联记忆系统贯穿全局
+    DirectorPlanner <--> TaskContext
+    ContinuitySupervisor <--> TaskContext
+    FinalInspector <--> TaskContext

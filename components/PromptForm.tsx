@@ -3,8 +3,8 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
-import {Video} from '@google/genai';
-import React, {useCallback, useEffect, useRef, useState} from 'react';
+import { Video } from '@google/genai';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AspectRatio,
   GenerateVideoParams,
@@ -43,7 +43,7 @@ const modeIcons: Record<GenerationMode, React.ReactNode> = {
   [GenerationMode.EXTEND_VIDEO]: <FilmIcon className="w-5 h-5" />,
 };
 
-const fileToBase64 = <T extends {file: File; base64: string}>(
+const fileToBase64 = <T extends { file: File; base64: string }>(
   file: File,
 ): Promise<T> => {
   return new Promise((resolve, reject) => {
@@ -51,7 +51,7 @@ const fileToBase64 = <T extends {file: File; base64: string}>(
     reader.onload = () => {
       const base64 = (reader.result as string).split(',')[1];
       if (base64) {
-        resolve({file, base64} as T);
+        resolve({ file, base64 } as T);
       } else {
         reject(new Error('Failed to read file as base64.'));
       }
@@ -72,12 +72,11 @@ const CustomSelect: React.FC<{
   icon: React.ReactNode;
   children: React.ReactNode;
   disabled?: boolean;
-}> = ({label, value, onChange, icon, children, disabled = false}) => (
+}> = ({ label, value, onChange, icon, children, disabled = false }) => (
   <div>
     <label
-      className={`text-xs block mb-1.5 font-medium ${
-        disabled ? 'text-gray-500' : 'text-gray-400'
-      }`}>
+      className={`text-xs block mb-1.5 font-medium ${disabled ? 'text-gray-500' : 'text-gray-400'
+        }`}>
       {label}
     </label>
     <div className="relative">
@@ -92,80 +91,21 @@ const CustomSelect: React.FC<{
         {children}
       </select>
       <ChevronDownIcon
-        className={`w-5 h-5 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none ${
-          disabled ? 'text-gray-600' : 'text-gray-400'
-        }`}
+        className={`w-5 h-5 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none ${disabled ? 'text-gray-600' : 'text-gray-400'
+          }`}
       />
     </div>
   </div>
 );
 
-const ImageUpload: React.FC<{
-  onSelect: (image: ImageFile) => void;
-  onRemove?: () => void;
-  image?: ImageFile | null;
-  label: React.ReactNode;
-  className?: string;
-}> = ({onSelect, onRemove, image, label, className = "w-28 h-20"}) => {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      try {
-        const imageFile = await fileToImageFile(file);
-        onSelect(imageFile);
-      } catch (error) {
-        console.error('Error converting file:', error);
-      }
-    }
-    if (inputRef.current) {
-      inputRef.current.value = '';
-    }
-  };
-
-  if (image) {
-    return (
-      <div className={`relative group ${className}`}>
-        <img
-          src={URL.createObjectURL(image.file)}
-          alt="preview"
-          className="w-full h-full object-cover rounded-lg shadow-inner"
-        />
-        <button
-          type="button"
-          onClick={onRemove}
-          className="absolute top-1 right-1 w-6 h-6 bg-black/60 hover:bg-black/80 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity"
-          aria-label="Remove image">
-          <XMarkIcon className="w-4 h-4" />
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={() => inputRef.current?.click()}
-      className={`${className} bg-gray-700/50 hover:bg-gray-700 border-2 border-dashed border-gray-600 rounded-lg flex flex-col items-center justify-center text-gray-400 hover:text-white transition-colors`}>
-      <PlusIcon className="w-6 h-6" />
-      <span className="text-xs mt-1 text-center px-1">{label}</span>
-      <input
-        type="file"
-        ref={inputRef}
-        onChange={handleFileChange}
-        accept="image/*"
-        className="hidden"
-      />
-    </button>
-  );
-};
+import { ImageUpload } from './ImageUpload';
 
 const VideoUpload: React.FC<{
   onSelect: (video: VideoFile) => void;
   onRemove?: () => void;
   video?: VideoFile | null;
   label: React.ReactNode;
-}> = ({onSelect, onRemove, video, label}) => {
+}> = ({ onSelect, onRemove, video, label }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -216,6 +156,7 @@ const VideoUpload: React.FC<{
     </button>
   );
 };
+
 
 interface PromptFormProps {
   onGenerate: (params: GenerateVideoParams) => void;
@@ -433,7 +374,7 @@ const PromptForm: React.FC<PromptFormProps> = ({
                   key={index}
                   image={img}
                   label=""
-                  onSelect={() => {}}
+                  onSelect={() => { }}
                   onRemove={() =>
                     setReferenceImages((imgs) => imgs.filter((_, i) => i !== index))
                   }

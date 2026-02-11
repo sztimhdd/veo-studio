@@ -12,16 +12,18 @@ const initialState: ProductionState = {
   artifacts: {
     plan: null,
     assets: [],
+    shots: [],
     draftVideo: null,
     anchorFrame: null,
     finalVideo: null
   },
+
   logs: [],
   error: null
 };
 
 // Actions
-type Action = 
+type Action =
   | { type: 'START_PIPELINE' }
   | { type: 'SET_PHASE', payload: PipelinePhase }
   | { type: 'UPDATE_ARTIFACTS', payload: Partial<ProductionArtifacts> }
@@ -37,14 +39,14 @@ const reducer = (state: ProductionState, action: Action): ProductionState => {
     case 'SET_PHASE':
       return { ...state, phase: action.payload };
     case 'UPDATE_ARTIFACTS':
-      return { 
-        ...state, 
-        artifacts: { ...state.artifacts, ...action.payload } 
+      return {
+        ...state,
+        artifacts: { ...state.artifacts, ...action.payload }
       };
     case 'ADD_LOG':
-      return { 
-        ...state, 
-        logs: [...state.logs, { ...action.payload, timestamp: Date.now() }] 
+      return {
+        ...state,
+        logs: [...state.logs, { ...action.payload, timestamp: Date.now() }]
       };
     case 'SET_ERROR':
       return { ...state, phase: 'ERROR', error: action.payload };

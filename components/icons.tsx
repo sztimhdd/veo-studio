@@ -5,7 +5,9 @@
 import React from 'react';
 import {
   ArrowDown,
+  ArrowLeft,
   ArrowRight,
+
   Baseline,
   ChevronDown,
   Download,
@@ -94,3 +96,7 @@ export const FileImageIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) =>
 export const CurvedArrowDownIcon: React.FC<React.SVGProps<SVGSVGElement>> = (
   props,
 ) => <ArrowDown {...props} strokeWidth={3} />;
+
+export const ArrowLeftIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
+  <ArrowLeft {...defaultProps} {...props} />
+);

@@ -126,7 +126,7 @@ export const runDirectorAgent = async (userPrompt: string): Promise<DirectorPlan
     config: {
       responseMimeType: 'application/json',
       responseSchema: schema,
-      systemInstruction: "You are an expert filmmaker at a top studio. You produce high-end, cinematic production plans in JSON format."
+      systemInstruction: "You are an expert filmmaker. Create a JSON production plan. CRITICAL: 1. Ensure the 'subject_prompt' and 'environment_prompt' are DETAILED. 2. In each 'shot', describe the action clearly. 3. Ensure the sequence appears to be shot in the EXACT SAME location with the EXACT SAME characters."
     }
   });
 
@@ -138,76 +138,159 @@ export const runDirectorAgent = async (userPrompt: string): Promise<DirectorPlan
 
 
 /**
- * ARTIST AGENT (Gemini 2.5 Flash Image)
- * Generates the raw visual assets based on the Director's plan, or uses user-provided ones.
+ * ARTIST AGENT (Nano Banana Pro 3 — gemini-3-pro-image-preview)
+ * Generates professional turnaround sheets for character & environment.
+ * 
+ * Character Sheet: 3 views (Front, 3/4 Side, Back) in a single composite image.
+ * Environment Sheet: 3 angles (Wide establishing, Medium, Detail) in a single composite.
+ * 
+ * If user provides a reference photo, the model extrapolates from it.
+ * If no upload, the model generates from the Director's text description.
  */
-export const runArtistAgent = async (plan: DirectorPlan, userCharacter?: Blob, userEnvironment?: Blob): Promise<AssetItem[]> => {
-  console.log('[Artist] Preparing assets...');
 
+// Helper: extract base64 image from a Gemini response
+const extractImageFromResponse = (response: any): string => {
+  const parts = response.candidates?.[0]?.content?.parts || [];
+  for (const part of parts) {
+    if (part.inlineData && part.inlineData.data) {
+      return part.inlineData.data;
+    }
+  }
+  return '';
+};
+
+// Helper: convert base64 to Blob
+const base64ToBlob = (base64: string, mimeType = 'image/png'): Blob => {
+  const byteCharacters = atob(base64);
+  const byteNumbers = new Array(byteCharacters.length);
+  for (let i = 0; i < byteCharacters.length; i++) {
+    byteNumbers[i] = byteCharacters.charCodeAt(i);
+  }
+  return new Blob([new Uint8Array(byteNumbers)], { type: mimeType });
+};
+
+export const runArtistAgent = async (plan: DirectorPlan, userCharacter?: Blob, userEnvironment?: Blob): Promise<AssetItem[]> => {
+  console.log('[Artist] Generating production bible with turnaround sheets...');
+
+  const ARTIST_MODEL = 'gemini-3-pro-image-preview';
   const assets: AssetItem[] = [];
 
-  // Helper to generate missing assets
-  const generateAsset = async (prompt: string, type: 'character' | 'background'): Promise<AssetItem> => {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: `Create a ${type} asset. Style: ${plan.visual_style}. Description: ${prompt}. High quality, detailed, production ready.`,
-    });
+  // ─── CHARACTER TURNAROUND SHEET ───
+  console.log('[Artist] Creating character turnaround sheet...');
 
-    let base64Data = '';
-    const parts = response.candidates?.[0]?.content?.parts || [];
-    for (const part of parts) {
-      if (part.inlineData && part.inlineData.data) {
-        base64Data = part.inlineData.data;
-        break;
-      }
-    }
+  const charTurnaroundPrompt = `Professional character turnaround reference sheet for film production.
+Create a SINGLE IMAGE containing exactly 3 side-by-side panels on a plain neutral grey background:
+- LEFT panel: FRONT view of the character
+- CENTER panel: 3/4 SIDE view of the character (turned slightly right)
+- RIGHT panel: BACK view of the character
 
-    if (!base64Data) throw new Error(`Artist failed to generate ${type} image`);
+Character description: ${plan.subject_prompt}
 
-    const byteCharacters = atob(base64Data);
-    const byteNumbers = new Array(byteCharacters.length);
-    for (let i = 0; i < byteCharacters.length; i++) {
-      byteNumbers[i] = byteCharacters.charCodeAt(i);
-    }
-    const byteArray = new Uint8Array(byteNumbers);
-    const blob = new Blob([byteArray], { type: 'image/png' });
+CRITICAL RULES:
+1. The character MUST be IDENTICAL across all 3 panels — same proportions, colors, markings, outfit, features.
+2. Each panel should show a neutral standing/sitting pose appropriate to the character.
+3. Clean, evenly lit, studio photography style. No dramatic shadows.
+4. The 3 panels must be clearly separated and well-composed.
+5. Style reference: ${plan.visual_style}`;
 
-    return {
-      id: crypto.randomUUID(),
-      type,
-      url: URL.createObjectURL(blob),
-      blob,
-      base64: base64Data,
-      source: 'ai'
-    };
-  };
-
-  // Process Character
+  let charResponse;
   if (userCharacter) {
-    assets.push({
-      id: crypto.randomUUID(),
-      type: 'character',
-      url: URL.createObjectURL(userCharacter),
-      blob: userCharacter,
-      source: 'user'
+    // Image-edit mode: extrapolate turnaround from user's reference photo
+    const userCharBase64 = await blobToBase64(userCharacter);
+    console.log('[Artist] User provided character reference — extrapolating 3-view sheet...');
+    charResponse = await ai.models.generateContent({
+      model: ARTIST_MODEL,
+      contents: [
+        { text: `Using this reference photo of the character, ${charTurnaroundPrompt}` },
+        { inlineData: { mimeType: 'image/jpeg', data: userCharBase64 } }
+      ],
+      config: {
+        responseModalities: ['TEXT', 'IMAGE'],
+      }
     });
   } else {
-    assets.push(await generateAsset(plan.subject_prompt, 'character'));
+    // Text-to-image mode: generate from Director's description
+    console.log('[Artist] No user reference — generating character from description...');
+    charResponse = await ai.models.generateContent({
+      model: ARTIST_MODEL,
+      contents: charTurnaroundPrompt,
+      config: {
+        responseModalities: ['TEXT', 'IMAGE'],
+      }
+    });
   }
 
-  // Process Environment
+  const charBase64 = extractImageFromResponse(charResponse);
+  if (!charBase64) throw new Error('Artist failed to generate character turnaround sheet');
+
+  const charBlob = base64ToBlob(charBase64);
+  assets.push({
+    id: crypto.randomUUID(),
+    type: 'character',
+    url: URL.createObjectURL(charBlob),
+    blob: charBlob,
+    base64: charBase64,
+    source: userCharacter ? 'user' : 'ai'
+  });
+  console.log('[Artist] ✅ Character turnaround sheet ready.');
+
+  // ─── ENVIRONMENT REFERENCE SHEET ───
+  console.log('[Artist] Creating environment reference sheet...');
+
+  const envTurnaroundPrompt = `Professional location reference sheet for film production.
+Create a SINGLE IMAGE containing exactly 3 side-by-side panels:
+- LEFT panel: WIDE establishing shot of the location (full environment visible)
+- CENTER panel: MEDIUM ground-level view (showing key features at eye level)
+- RIGHT panel: DETAIL close-up (texture, materials, atmosphere details)
+
+Location description: ${plan.environment_prompt}
+
+CRITICAL RULES:
+1. The location MUST be the SAME place across all 3 panels — same time of day, same weather, same lighting.
+2. Each panel shows a different focal length/distance but the SAME environment.
+3. Consistent color palette and atmosphere throughout.
+4. Style reference: ${plan.visual_style}`;
+
+  let envResponse;
   if (userEnvironment) {
-    assets.push({
-      id: crypto.randomUUID(),
-      type: 'background',
-      url: URL.createObjectURL(userEnvironment),
-      blob: userEnvironment,
-      source: 'user'
+    const userEnvBase64 = await blobToBase64(userEnvironment);
+    console.log('[Artist] User provided environment reference — extrapolating reference sheet...');
+    envResponse = await ai.models.generateContent({
+      model: ARTIST_MODEL,
+      contents: [
+        { text: `Using this reference photo of the location, ${envTurnaroundPrompt}` },
+        { inlineData: { mimeType: 'image/jpeg', data: userEnvBase64 } }
+      ],
+      config: {
+        responseModalities: ['TEXT', 'IMAGE'],
+      }
     });
   } else {
-    assets.push(await generateAsset(plan.environment_prompt, 'background'));
+    console.log('[Artist] No user reference — generating environment from description...');
+    envResponse = await ai.models.generateContent({
+      model: ARTIST_MODEL,
+      contents: envTurnaroundPrompt,
+      config: {
+        responseModalities: ['TEXT', 'IMAGE'],
+      }
+    });
   }
 
+  const envBase64 = extractImageFromResponse(envResponse);
+  if (!envBase64) throw new Error('Artist failed to generate environment reference sheet');
+
+  const envBlob = base64ToBlob(envBase64);
+  assets.push({
+    id: crypto.randomUUID(),
+    type: 'background',
+    url: URL.createObjectURL(envBlob),
+    blob: envBlob,
+    base64: envBase64,
+    source: userEnvironment ? 'user' : 'ai'
+  });
+  console.log('[Artist] ✅ Environment reference sheet ready.');
+
+  console.log(`[Artist] Production bible complete: ${assets.length} turnaround sheets.`);
   return assets;
 };
 
@@ -236,9 +319,12 @@ export const runShotDraftingAgent = async (shot: ShotParams, plan: DirectorPlan,
     });
   }
 
+  const finalPrompt = `Subject: ${plan.subject_prompt}. Environment: ${plan.environment_prompt}. Action: ${shot.prompt}. Camera: ${shot.camera_movement}. Style: ${plan.visual_style}`;
+  console.log(`[Engineer] Shot ${shot.order} Prompt: ${finalPrompt}`);
+
   let operation = await ai.models.generateVideos({
     model: 'veo-3.1-fast-generate-preview',
-    prompt: `${shot.prompt}. ${shot.camera_movement}. Style: ${plan.visual_style}`,
+    prompt: finalPrompt,
     config: {
       numberOfVideos: 1,
       resolution: '720p',
