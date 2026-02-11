@@ -4,7 +4,7 @@
 The application uses a **Fan-Out / Fan-In** pattern with a **Hybrid Asset Pipeline**.
 1.  **Composite Input:** User Prompt + Optional Blobs (Character/BG).
 2.  **Sequential Prep:** Plan -> Asset Filling (Artist Agent only runs for missing slots).
-3.  **Parallel Execution:** 3x Veo Generation Requests.
+3.  **Sequential Execution:** 3x Veo Generation Requests (to respect API quota).
 4.  **Unified View:** Results aggregated into a specific "Scene" object.
 
 ## 2. Data Models
@@ -47,15 +47,15 @@ interface ShotParams {
     *   `else` -> Call Gemini 2.5 Flash Image to generate Background.
 *   **Output:** Complete `ProductionBible`.
 
-### 3.3. The Production Agent (Parallelizer)
+### 3.3. The Production Agent (Sequential Orchestrator)
 *   **Input:** `ShotParams[]` + `ProductionBible`
 *   **Logic:**
-    *   Map over `ShotParams`.
+    *   Iterate over `ShotParams`.
     *   For each shot, construct a `generateVideos` request.
     *   **Inject References:** strictly pass `bible.character` as `referenceType: ASSET`.
     *   **Inject References:** pass `bible.environment` as `referenceType: STYLE` (or `ASSET` if static).
     *   **Inject Prompt:** Combine `shot.prompt` + `bible.style` + `shot.camera_movement`.
-    *   `Promise.all()` the requests.
+    *   Wait for completion and add a 10s cooldown before starting the next shot.
 
 ## 4. Frontend Implementation
 

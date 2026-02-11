@@ -234,6 +234,10 @@ CRITICAL RULES:
   });
   console.log('[Artist] ✅ Character turnaround sheet ready.');
 
+  // Safety buffer for API quota
+  console.log('[Artist] Cooling down for 10s before next asset...');
+  await new Promise(resolve => setTimeout(resolve, 10000));
+
   // ─── ENVIRONMENT REFERENCE SHEET ───
   console.log('[Artist] Creating environment reference sheet...');
 
@@ -301,9 +305,6 @@ CRITICAL RULES:
 export const runShotDraftingAgent = async (shot: ShotParams, plan: DirectorPlan, assets: AssetItem[]): Promise<VideoArtifact> => {
   console.log(`[Engineer] Drafting shot ${shot.order}...`);
 
-  // Stagger start times slightly to avoid hitting rate limits instantly with 3 parallel calls
-  await new Promise(resolve => setTimeout(resolve, shot.order * 2000));
-
   const references: VideoGenerationReferenceImage[] = [];
 
   for (const asset of assets) {
@@ -325,11 +326,15 @@ export const runShotDraftingAgent = async (shot: ShotParams, plan: DirectorPlan,
   const finalPrompt = `Subject: ${plan.subject_prompt}. Environment: ${plan.environment_prompt}. Action: ${shot.prompt}. Camera: ${shot.camera_movement}. Style: ${plan.visual_style}`;
   console.log(`[Engineer] Shot ${shot.order} Prompt: ${finalPrompt}`);
 
-  // Retry loop for transient errors
+// Retry loop for transient errors
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      if (attempt > 1) console.log(`[Engineer] Retrying shot ${shot.order} (Attempt ${attempt}/3)...`);
+      if (attempt > 1) {
+        const backoff = attempt * 20000;
+        console.log(`[Engineer] Quota cooldown: waiting ${backoff / 1000}s before retry...`);
+        await new Promise(resolve => setTimeout(resolve, backoff));
+      }
 
       let operation = await ai.models.generateVideos({
         model: 'veo-3.1-fast-generate-preview',
@@ -374,8 +379,6 @@ export const runShotDraftingAgent = async (shot: ShotParams, plan: DirectorPlan,
     } catch (e: any) {
       console.warn(`[Engineer] Attempt ${attempt} failed for shot ${shot.order}:`, e);
       lastError = e;
-      // Wait before retrying (exponential backoff)
-      await new Promise(resolve => setTimeout(resolve, attempt * 5000));
     }
   }
 
@@ -383,10 +386,13 @@ export const runShotDraftingAgent = async (shot: ShotParams, plan: DirectorPlan,
 };
 
 /**
- * PRODUCTION PIPELINE (Parallelization)
- * Manages the parallel generation of the Dailies sequence.
+ * PRODUCTION PIPELINE (Sequential)
+ * Manages the sequential generation of the Dailies sequence.
  */
 export const runProductionPipeline = async (plan: DirectorPlan, assets: AssetItem[]): Promise<VideoArtifact[]> => {
+  console.log('[Production] Cooling down for 15s before starting cameras (Pre-Production)...');
+  await new Promise(resolve => setTimeout(resolve, 15000));
+
   console.log('[Production] Starting SERIAL generation of 3 shots (to respect quota)...');
 
   const results: VideoArtifact[] = [];
@@ -405,8 +411,8 @@ export const runProductionPipeline = async (plan: DirectorPlan, assets: AssetIte
 
     // Safety buffer between shots
     if (shot.order < plan.shots.length) {
-      console.log('[Production] Cooling down for 5s before next shot...');
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      console.log('[Production] Cooling down for 20s before next shot...');
+      await new Promise(resolve => setTimeout(resolve, 20000));
     }
   }
 

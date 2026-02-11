@@ -12,6 +12,7 @@
     "@google/genai": "^1.22.0",
     "gifshot": "^0.4.5",
     "lucide-react": "^0.408.0",
+    "oh-my-opencode": "^3.5.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

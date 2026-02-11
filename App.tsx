@@ -69,10 +69,10 @@ const StudioContent: React.FC<{
       dispatch({ type: 'UPDATE_ARTIFACTS', payload: { assets } });
       dispatch({ type: 'ADD_LOG', payload: { agent: 'Artist', message: `Bible locked. Assets: ${assets.length}. Source: ${assets.map(a => a.source).join(', ')}`, phase: 'ASSET_GEN' } });
 
-      // 3. PRODUCTION (Parallel Shooting)
+      // 3. PRODUCTION (Sequential Shooting)
       dispatch({ type: 'SET_PHASE', payload: 'DRAFTING' });
-      dispatch({ type: 'ADD_LOG', payload: { agent: 'Engineer', message: 'rolling cameras... (Generating 3 parallel shots)', phase: 'DRAFTING' } });
-
+      dispatch({ type: 'ADD_LOG', payload: { agent: 'Engineer', message: 'Pre-production cooldown (15s)...', phase: 'DRAFTING' } });
+      
       const shots = await runProductionPipeline(plan, assets);
 
       dispatch({ type: 'UPDATE_ARTIFACTS', payload: { shots } });
