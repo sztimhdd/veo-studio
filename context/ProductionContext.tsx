@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 import React, { createContext, useContext, useReducer, ReactNode } from 'react';
-import { LogEntry, ProductionArtifacts, ProductionState, PipelinePhase } from '../types';
+import { LogEntry, ProductionArtifacts, ProductionState, PipelinePhase, VideoArtifact } from '../types';
 
 // Initial State
 const initialState: ProductionState = {
@@ -27,6 +27,7 @@ type Action =
   | { type: 'START_PIPELINE' }
   | { type: 'SET_PHASE', payload: PipelinePhase }
   | { type: 'UPDATE_ARTIFACTS', payload: Partial<ProductionArtifacts> }
+  | { type: 'UPDATE_SHOT', payload: { index: number, shot: VideoArtifact } }
   | { type: 'ADD_LOG', payload: Omit<LogEntry, 'timestamp'> }
   | { type: 'SET_ERROR', payload: string }
   | { type: 'RESET' };
@@ -42,6 +43,16 @@ const reducer = (state: ProductionState, action: Action): ProductionState => {
       return {
         ...state,
         artifacts: { ...state.artifacts, ...action.payload }
+      };
+    case 'UPDATE_SHOT':
+      const newShots = [...state.artifacts.shots];
+      newShots[action.payload.index] = action.payload.shot;
+      return {
+        ...state,
+        artifacts: {
+          ...state.artifacts,
+          shots: newShots
+        }
       };
     case 'ADD_LOG':
       return {

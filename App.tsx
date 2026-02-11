@@ -19,7 +19,8 @@ import {
   runArtistAgent,
   runDirectorAgent,
   runProductionPipeline,
-  runRefinerAgent
+  runRefinerAgent,
+  runShotDraftingAgent
 } from './services/pipelineService';
 import {
   AppState,
@@ -83,6 +84,41 @@ const StudioContent: React.FC<{
       console.error(e);
       dispatch({ type: 'SET_ERROR', payload: e.message || "Unknown Pipeline Error" });
       dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `CRITICAL FAILURE: ${e.message}`, phase: 'ERROR' } });
+    }
+  };
+
+  const handleRegenerateShot = async (index: number, feedback: string) => {
+    if (!state.artifacts.plan || !state.artifacts.assets) return;
+    
+    const shotParams = state.artifacts.plan.shots[index];
+    const currentShot = state.artifacts.shots[index];
+    const nextVersion = (currentShot?.version || 1) + 1;
+
+    dispatch({ type: 'ADD_LOG', payload: { agent: 'Engineer', message: `Regenerating SC01_SH0${index + 1} (Take ${nextVersion})...`, phase: 'DRAFTING' } });
+    
+    // We don't set the whole phase to DRAFTING to avoid UI disruption, 
+    // but the specific shot card will show loading based on a local state we'll add to Visualizer.
+    
+    try {
+      const newShot = await runShotDraftingAgent(
+        shotParams, 
+        state.artifacts.plan, 
+        state.artifacts.assets, 
+        feedback
+      );
+
+      dispatch({ 
+        type: 'UPDATE_SHOT', 
+        payload: { 
+          index, 
+          shot: { ...newShot, userFeedback: feedback, version: nextVersion } 
+        } 
+      });
+      
+      dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Shot ${index + 1} Take ${nextVersion} ready.`, phase: 'COMPLETE' } });
+    } catch (e: any) {
+      console.error(e);
+      dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Regeneration failed: ${e.message}`, phase: 'ERROR' } });
     }
   };
 
@@ -192,7 +228,7 @@ const StudioContent: React.FC<{
               <span className="text-xs text-green-500 font-mono">LIVE SESSION</span>
             </div>
           </div>
-          <PipelineVisualizer />
+          <PipelineVisualizer onRegenerate={handleRegenerateShot} />
         </div>
       )}
     </div>

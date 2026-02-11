@@ -301,9 +301,15 @@ CRITICAL RULES:
 /**
  * ENGINEER AGENT - PHASE 1: DRAFT (Veo 3.1 Fast)
  * Generates the motion for a SPECIFIC SHOT using the shared assets.
+ * Now accepts optional human feedback to guide regeneration.
  */
-export const runShotDraftingAgent = async (shot: ShotParams, plan: DirectorPlan, assets: AssetItem[]): Promise<VideoArtifact> => {
-  console.log(`[Engineer] Drafting shot ${shot.order}...`);
+export const runShotDraftingAgent = async (
+  shot: ShotParams, 
+  plan: DirectorPlan, 
+  assets: AssetItem[], 
+  feedback?: string
+): Promise<VideoArtifact> => {
+  console.log(`[Engineer] Drafting shot ${shot.order}...${feedback ? ' (with feedback)' : ''}`);
 
   const references: VideoGenerationReferenceImage[] = [];
 
@@ -323,7 +329,12 @@ export const runShotDraftingAgent = async (shot: ShotParams, plan: DirectorPlan,
     });
   }
 
-  const finalPrompt = `Subject: ${plan.subject_prompt}. Environment: ${plan.environment_prompt}. Action: ${shot.prompt}. Camera: ${shot.camera_movement}. Style: ${plan.visual_style}`;
+  let finalPrompt = `Subject: ${plan.subject_prompt}. Environment: ${plan.environment_prompt}. Action: ${shot.prompt}. Camera: ${shot.camera_movement}. Style: ${plan.visual_style}`;
+  
+  if (feedback) {
+    finalPrompt = `CRITICAL DIRECTOR NOTE: ${feedback}. ${finalPrompt}`;
+  }
+  
   console.log(`[Engineer] Shot ${shot.order} Prompt: ${finalPrompt}`);
 
 // Retry loop for transient errors

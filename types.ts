@@ -102,6 +102,8 @@ export interface VideoArtifact {
   blob: Blob;
   uri?: string; // The Google API URI
   shotId?: string; // Link back to the shot params
+  userFeedback?: string; // Human critique
+  version?: number; // Take 1, 2, 3...
 }
 
 export interface ProductionArtifacts {

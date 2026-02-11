@@ -3,18 +3,42 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useProduction } from '../context/ProductionContext';
-import { ArrowRightIcon, SparklesIcon, ChevronDownIcon, TvIcon, VideoIcon, FileImageIcon, FilmIcon, PlayIcon, CheckCircleIcon } from 'lucide-react';
+import { ArrowRightIcon, SparklesIcon, ChevronDownIcon, TvIcon, VideoIcon, FileImageIcon, FilmIcon, PlayIcon, CheckCircleIcon, RefreshCwIcon, MessageSquareIcon } from 'lucide-react';
 
-const PipelineVisualizer: React.FC = () => {
+interface PipelineVisualizerProps {
+    onRegenerate?: (index: number, feedback: string) => Promise<void>;
+}
+
+const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate }) => {
     const { state } = useProduction();
     const logsEndRef = useRef<HTMLDivElement>(null);
+    const [regeneratingIndices, setRegeneratingIndices] = useState<Set<number>>(new Set());
+    const [feedbackInputs, setFeedbackInputs] = useState<Record<number, string>>({});
+    const [showFeedbackFor, setShowFeedbackFor] = useState<number | null>(null);
 
     // Auto-scroll logs
     useEffect(() => {
         logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [state.logs]);
+
+    const handleRegenerateClick = async (index: number) => {
+        const feedback = feedbackInputs[index] || "";
+        if (onRegenerate) {
+            setRegeneratingIndices(prev => new Set(prev).add(index));
+            setShowFeedbackFor(null);
+            try {
+                await onRegenerate(index, feedback);
+            } finally {
+                setRegeneratingIndices(prev => {
+                    const next = new Set(prev);
+                    next.delete(index);
+                    return next;
+                });
+            }
+        }
+    };
 
     const PhaseIndicator = ({ phase, current, label }: { phase: string, current: string, label: string }) => {
         const isPast = ['PLANNING', 'ASSET_GEN', 'DRAFTING', 'REFINING', 'RENDERING', 'COMPLETE'].indexOf(current) > ['PLANNING', 'ASSET_GEN', 'DRAFTING', 'REFINING', 'RENDERING', 'COMPLETE'].indexOf(phase);
@@ -165,21 +189,58 @@ const PipelineVisualizer: React.FC = () => {
 
                                 return (
                                     <div key={index} className="flex flex-col gap-2 relative group">
-                                        <div className="aspect-[9/16] md:aspect-video bg-gray-900 rounded-lg overflow-hidden border border-gray-800 relative">
-                                            {shotResult ? (
-                                                <video
-                                                    src={shotResult.url}
-                                                    controls
-                                                    autoPlay
-                                                    loop
-                                                    className="w-full h-full object-cover"
-                                                />
+                                        <div className="aspect-[9/16] md:aspect-video bg-gray-900 rounded-lg overflow-hidden border border-gray-800 relative group">
+                                            {shotResult && !regeneratingIndices.has(index) ? (
+                                                <>
+                                                    <video
+                                                        src={shotResult.url}
+                                                        controls
+                                                        autoPlay
+                                                        loop
+                                                        className="w-full h-full object-cover"
+                                                    />
+                                                    
+                                                    {/* Critic Tools Overlay */}
+                                                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-3 p-4">
+                                                        {showFeedbackFor === index ? (
+                                                            <div className="w-full flex flex-col gap-2 animate-in fade-in zoom-in duration-200">
+                                                                <textarea 
+                                                                    className="w-full bg-gray-800 border border-gray-600 rounded p-2 text-[10px] text-white outline-none focus:border-indigo-500"
+                                                                    placeholder="Describe changes (e.g. 'more rain', 'slower pan')..."
+                                                                    value={feedbackInputs[index] || ""}
+                                                                    onChange={(e) => setFeedbackInputs({...feedbackInputs, [index]: e.target.value})}
+                                                                    autoFocus
+                                                                />
+                                                                <div className="flex gap-2">
+                                                                    <button 
+                                                                        onClick={() => handleRegenerateClick(index)}
+                                                                        className="flex-grow py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold rounded flex items-center justify-center gap-1">
+                                                                        <RefreshCwIcon className="w-3 h-3" /> Regenerate Take {shotResult.version ? shotResult.version + 1 : 2}
+                                                                    </button>
+                                                                    <button 
+                                                                        onClick={() => setShowFeedbackFor(null)}
+                                                                        className="px-2 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-[10px] font-bold rounded">
+                                                                        Cancel
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <button 
+                                                                onClick={() => setShowFeedbackFor(index)}
+                                                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-full shadow-xl flex items-center gap-2 transform transition-transform active:scale-95">
+                                                                <MessageSquareIcon className="w-4 h-4" /> Add Feedback
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </>
                                             ) : (
                                                 <div className="w-full h-full flex flex-col items-center justify-center">
-                                                    {state.phase === 'DRAFTING' ? (
+                                                    {(state.phase === 'DRAFTING' || regeneratingIndices.has(index)) ? (
                                                         <>
                                                             <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mb-2"></div>
-                                                            <span className="text-[9px] text-indigo-400 uppercase animate-pulse">Rolling...</span>
+                                                            <span className="text-[9px] text-indigo-400 uppercase animate-pulse">
+                                                                {regeneratingIndices.has(index) ? `Rolling Take ${shotResult?.version ? shotResult.version + 1 : 2}...` : 'Rolling...'}
+                                                            </span>
                                                         </>
                                                     ) : (
                                                         <span className="text-[9px] text-gray-700 uppercase">Wait</span>
@@ -189,15 +250,28 @@ const PipelineVisualizer: React.FC = () => {
 
                                             {/* Overlay Shot Info */}
                                             {shotPlan && (
-                                                <div className="absolute top-2 left-2 px-2 py-1 bg-black/60 backdrop-blur rounded text-[9px] font-mono text-white border border-white/10">
-                                                    SC01_SH0{index + 1}
+                                                <div className="absolute top-2 left-2 px-2 py-1 bg-black/60 backdrop-blur rounded text-[9px] font-mono text-white border border-white/10 flex items-center gap-2">
+                                                    SC01_SH0{index + 1} 
+                                                    {shotResult?.version && shotResult.version > 1 && (
+                                                        <span className="text-amber-400 font-bold border-l border-white/20 pl-2">TAKE {shotResult.version}</span>
+                                                    )}
                                                 </div>
                                             )}
                                         </div>
                                         {shotPlan && (
-                                            <p className="text-[10px] text-gray-500 line-clamp-2 leading-tight">
-                                                {shotPlan.camera_movement}
-                                            </p>
+                                            <div className="flex flex-col gap-1">
+                                                <p className="text-[10px] text-gray-400 line-clamp-2 leading-tight">
+                                                    {shotPlan.camera_movement}
+                                                </p>
+                                                {shotResult?.userFeedback && (
+                                                    <div className="flex gap-1 items-start bg-amber-900/10 border border-amber-500/20 rounded p-1.5 mt-1">
+                                                        <MessageSquareIcon className="w-2.5 h-2.5 text-amber-500 mt-0.5" />
+                                                        <p className="text-[9px] text-amber-200/70 italic leading-tight">
+                                                            "{shotResult.userFeedback}"
+                                                        </p>
+                                                    </div>
+                                                )}
+                                            </div>
                                         )}
                                     </div>
                                 );
