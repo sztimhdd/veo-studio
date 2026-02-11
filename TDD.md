@@ -1,74 +1,70 @@
-# Technical Design Document (TDD): Veo Studio "Dailies" Architecture
+# Technical Design Document (TDD): Cyclic Agentic Pipeline
 
 ## 1. System Architecture
-The application uses a **Fan-Out / Fan-In** pattern with a **Hybrid Asset Pipeline**.
-1.  **Composite Input:** User Prompt + Optional Blobs (Character/BG).
-2.  **Sequential Prep:** Plan -> Asset Filling (Artist Agent only runs for missing slots).
-3.  **Sequential Execution:** 3x Veo Generation Requests (to respect API quota).
-4.  **Unified View:** Results aggregated into a specific "Scene" object.
+The platform implements a **Multimodal DAG (Directed Acyclic Graph)** with feedback loops. It shifts from simple generation to a **Plan-Execute-Critique** cycle.
 
-## 2. Data Models
+### 1.1. High-Level Flow (The 6 Phases)
+1.  **Phase 0 (Memory):** Uses a RAG-based Memory System.
+    *   **Global KB:** Cinematic grammar, lighting laws.
+    *   **Task Context:** Current character bank and shot history.
+2.  **Phase 1 (Planning):** **Director Agent** (Gemini 3 Pro) outputs a `Script_JSON`.
+    *   **CostEstimator:** Calculates token/API cost and triggers a "User Approval" gate.
+3.  **Phase 2 (Execution):** 
+    *   **Artist (MaterialGen):** Generates Turnaround Sheets (Composite Images).
+    *   **Drafting (Seedance/Veo Fast):** Generates batch variants of low-res clips.
+4.  **Phase 3 (Critique):** **Supervisor Agent** (Gemini Pro Vision) evaluates variants against the Bible.
+    *   **MotionLock:** Selection of the seed/latent space for the final render.
+5.  **Phase 4 (Refinement):** 
+    *   **Keyframe Extraction:** Logic based on motion peak detection.
+    *   **NanoRedraw:** High-fidelity 4K upscaling of anchor frames.
+6.  **Phase 5 (Mastering):** **Combiner Agent** assembles Veo 3.1 payloads (Anchor frames + Locked Motion + Style Latents).
 
-### 2.1. The Bible (Shared State)
-To ensure consistency, we generate the assets *once* (or use user uploads) and hold them in memory.
+## 2. Data Models & Memory System
 
+### 2.1. Layered Memory (`MemorySystem`)
 ```typescript
-interface ProductionBible {
-  character: AssetItem; // Blob + base64 (User Upload OR AI Gen)
-  environment: AssetItem; // Blob + base64 (User Upload OR AI Gen)
-  style: string; // Text description
+interface MemorySystem {
+  global_kb: string[];      // Cinematic rules
+  task_context: {
+    character_bank: AssetItem[];
+    shot_history: VideoArtifact[];
+  };
+  user_preferences: {
+    style_presets: string[];
+    feedback_history: string[];
+  };
 }
 ```
 
-### 2.2. The Shot List
+### 2.2. Evaluation Schema (`EvalReport`)
 ```typescript
-interface ShotParams {
-  id: string;
-  order: number;
-  prompt: string;
-  camera_movement: string;
-  duration_seconds: number;
+interface EvalReport {
+  variant_scores: Record<string, number>;
+  temporal_consistency_score: number;
+  semantic_alignment: number;
+  flaws: Array<{ timestamp: number; type: 'artifact' | 'drift' | 'glitch' }>;
 }
 ```
 
-## 3. Service Layer Logic (`pipelineService.ts`)
+## 3. Agent Responsibilities
 
-### 3.1. The Director Agent
-*   **Model:** `gemini-3-pro-preview`
-*   **Output:** JSON Array of `ShotParams`.
-*   **System Instruction:** "You are a cinematographer. Split this narrative into 3 distinct shots. Ensure camera angles varies (Wide, Medium, Close). output JSON."
+### 3.1. Planner (IntentParser & Director)
+*   **Model:** Gemini 3 Pro.
+*   **Task:** Intent decomposition and structured script generation.
 
-### 3.2. The Artist Agent (The Gap Filler)
-*   **Input:** `DirectorPlan` + `UserUploads`
-*   **Logic:**
-    *   `if (user.characterImage)` -> Use it.
-    *   `else` -> Call Gemini 2.5 Flash Image to generate Character.
-    *   `if (user.bgImage)` -> Use it.
-    *   `else` -> Call Gemini 2.5 Flash Image to generate Background.
-*   **Output:** Complete `ProductionBible`.
+### 3.2. Executor Cluster (Artist & Engineer)
+*   **Artist:** turnaround sheet generation using image-to-image extrapolation.
+*   **PromptEngineer:** Automated prompt expansion and negative prompt generation.
+*   **Renderer:** Sequential API orchestrator with quota-aware backoff.
 
-### 3.3. The Production Agent (Sequential Orchestrator)
-*   **Input:** `ShotParams[]` + `ProductionBible`
-*   **Logic:**
-    *   Iterate over `ShotParams`.
-    *   For each shot, construct a `generateVideos` request.
-    *   **Inject References:** strictly pass `bible.character` as `referenceType: ASSET`.
-    *   **Inject References:** pass `bible.environment` as `referenceType: STYLE` (or `ASSET` if static).
-    *   **Inject Prompt:** Combine `shot.prompt` + `bible.style` + `shot.camera_movement`.
-    *   Wait for completion and add a 10s cooldown before starting the next shot.
+### 3.3. Critic (Supervisor & QA)
+*   **Model:** Gemini 3 Pro Vision / Video-Bench.
+*   **Task:** Frame-by-frame analysis and quality gate enforcement.
 
-## 4. Frontend Implementation
+## 4. Engineering Constraints & Stability
+*   **Sequential Pipeline:** Mandatory inter-shot cooldowns (20s) and pre-production buffers (15s) to mitigate `429 Resource Exhausted` errors.
+*   **State Persistence:** Use of `ProductionContext` to hold the "Bible" and "Film Strip" across the DAG phases.
+*   **Cleanup:** Automated revocation of ObjectURLs to prevent memory leaks during long-running refinement loops.
 
-### 4.1. Input Form
-*   Add File Inputs for "Character Ref" and "Environment Ref" in the Studio Mode UI.
-
-### 4.2. `PipelineVisualizer` Update
-*   Needs to support a list of videos ("Film Strip").
-*   Asset view should distinguish between "User Provided" vs "AI Generated".
-
-### 4.3. State Management (`ProductionContext`)
-*   Update `ProductionArtifacts` to hold `shots: VideoArtifact[]`.
-
-## 5. Deployment Constraints
-*   **API Costs:** Generating 3 videos costs 3x.
-*   **Browser Memory:** Storing user uploads + generated blobs is fine. Revoke ObjectURLs on unmount.
+## 5. Future Implementation: MCP Tool Servers
+The architecture is designed to move toward an **MCP (Model Context Protocol)** Tool Server model, where agents can dynamically call specialized tools for scene cutting, audio synthesis, and compliance checking.

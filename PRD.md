@@ -1,44 +1,49 @@
-# Product Requirements Document (PRD): Veo Studio "Dailies" MVP
+# Product Requirements Document (PRD): Veo Studio "Dailies" Platform
 
 ## 1. Executive Summary
-**Veo Studio** is an agentic orchestration tool that solves the "Consistency Problem" in AI Video.
-Instead of generating a single hallucinated video, it acts as a **Virtual Production Crew**. It establishes a visual "Bible" (Characters/Settings) and generates a batch of consistent, 5-second clips ("Rushes") that a human editor can later assemble.
+**Veo Studio** is an agentic orchestration platform that solves the "Consistency and Quality Problem" in AI Video production. 
+Moving beyond simple generation, it acts as an **End-to-End Virtual Production Studio**. It manages a persistent state (Memory), enforces cinematic standards via a Multi-Agent pipeline, and delivers consistent, high-fidelity 5-second shots ready for professional assembly.
 
 ## 2. Problem Statement
-*   **The Drift:** In standard GenAI, Shot 1 looks different from Shot 2. Characters change clothes, lighting shifts.
-*   **The Wait:** Generating shots sequentially is too slow for creative iteration.
-*   **The Control Gap:** Users often have specific reference images (e.g., a specific product or character design) but current tools force them to rely on text-only prompts that hallucinate new designs.
+*   **Temporal & Semantic Drift:** AI models struggle to maintain character and environment details across multiple shots.
+*   **The Black Box Problem:** Lack of visibility into costs and creative decisions before generation begins.
+*   **Quality Variance:** Hallucinations and motion artifacts often ruin a generation, requiring expensive retries.
 
-## 3. The Solution: "The Dailies Engine"
-We do not build an editor. We build a **Generator** that respects a shared visual state.
+## 3. The Solution: "Cyclic Virtual Production"
+We implement a 6-phase DAG (Directed Acyclic Graph) architecture that integrates planning, execution, and critique.
 
 ### 3.1. The Agentic Workflow
-1.  **Phase 1: Input & Scripting (Hybrid)**
-    *   **User Input:** Story Prompt (Text) + **Optional Reference Uploads** (Character Sheet / Environment Photo).
-    *   **Director Agent:** Breaks the story into 3 distinct "Shots" with specific camera directions.
-2.  **Phase 2: The Art Dept (The Bible)**
-    *   **Logic:** The system constructs the "Production Bible."
-        *   *If User Uploaded:* The system adopts the user's image as the canonical reference.
-        *   *If Missing:* The **Artist Agent** generates the missing asset based on the script.
-    *   *Result:* A complete set of assets (Character + BG) ready for production.
-3.  **Phase 3: Production (Parallel Generation)**
-    *   The system fires 3 concurrent requests to Veo 3.1 Fast.
-    *   **Crucial:** All 3 requests use the **Same** Reference Images (User-provided or AI-generated) from Phase 2.
-    *   **Constraint:** This ensures Short A and Short B feature the exact same subject.
-4.  **Phase 4: Review (The Film Strip)**
-    *   UI displays the shots side-by-side.
-    *   User can review "The Dailies" to see if the sequence works.
+1.  **Phase 0: Intent & Memory:** Analyzes user requirements and brand guidelines. Maintains long-term memory (User Prefs, Character Banks).
+2.  **Phase 1: Structured Pre-Production:** 
+    *   **Director Agent:** Generates structured JSON scripts and shot tables.
+    *   **Cost Estimator:** Provides budget transparency and "Early Exit" arbitration before costly rendering.
+3.  **Phase 2: Execution Cluster:** 
+    *   **Material Generator:** Creates character turnaround and environment reference sheets.
+    *   **Prompt Engineer:** Optimizes prompts for semantic alignment.
+    *   **Draft Generator:** Produces low-resolution 4-6 variants for review.
+4.  **Phase 3: Continuity Supervision:** 
+    *   **Critic Agent:** Scores drafts for temporal consistency and semantic alignment.
+    *   **Motion Lock:** User or agent selection of the "Locked Skeleton" (the base motion).
+5.  **Phase 4: High-Res Refinement:** 
+    *   Intelligent keyframe extraction followed by High-Res Redrawing (4K) to anchor visual quality.
+    *   **Feature Consistency Checker:** Prevents style drift using similarity mapping.
+6.  **Phase 5: Master Rendering:** Uses Veo 3.1 with multi-modal conditions (locked motion + high-res anchors + optimized prompts).
+7.  **Phase 6: QA & Feedback Loops:** 
+    *   Final quality gate with automated "Local Fix" (redraw specified frames) or "Global Fix" (re-scripting) capabilities.
 
 ## 4. Key Features
-*   **Studio Mode Toggle:** Switch between "Classic" (Single Shot) and "Agentic" (Multi-Shot).
-*   **Asset Uploader:** Drag-and-drop slots for "Cast" and "Location" in the Studio Input form.
-*   **The Film Strip UI:** A horizontal gallery of the generated shorts.
+*   **Dailies Engine:** Automated generation of consistent multi-shot sequences.
+*   **Production Bible:** Persistent character and setting references.
+*   **Agentic Quality Gates:** Automated critique and scoring system.
+*   **Memory System:** Brand and user-specific preference storage.
+*   **Cost-Aware Pipeline:** Budgeting and arbitration before execution.
 
 ## 5. Non-Functional Requirements
-*   **Speed:** Parallel generation is mandatory.
-*   **Reliability:** Use `veo-3.1-fast` for the MVP.
-*   **Transition Strategy:** Achieve flow through *Prompt Engineering* (matching camera vectors), not Image Processing.
+*   **Consistency:** Character/Environment delta < 10% across shots (measured by Consistency Checker).
+*   **Performance:** Sequential execution with optimized cooldowns to respect API quotas.
+*   **Extensibility:** Modular "Tool Server" architecture for plugging in new AI models.
 
-## 6. Metrics
-*   **Consistency Score:** Subjective validation that the character in Shot 1 is recognizable in Shot 3.
-*   **Throughput:** Successful generation of 3 concurrent videos without rate-limiting errors.
+## 6. Success Metrics
+*   **Pass Rate:** Percentage of generations passing the Phase 6 Quality Gate on the first try.
+*   **Consistency Score:** Average score from the Continuity Supervisor.
+*   **Cost Efficiency:** Reduction in manual retries due to early-stage critiques.
