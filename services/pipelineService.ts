@@ -169,11 +169,12 @@ export const runDirectorAgent = async (userPrompt: string): Promise<DirectorPlan
                1. **Cinematography:** Specify Shot Type (Wide, Medium, Close-up), Camera Angle (Eye-level, Low-angle, High-angle, Bird's-eye, Dutch angle), and Movement (Pan, Tilt, Dolly, Truck, Crane, Handheld, Arc, Static). Use "Lens Effects" if needed (Shallow depth of field, Rack focus, Fisheye).
                2. **Subject Consistency:** Use the EXACT SAME detailed physical description for the main character in EVERY shot to prevent identity drift.
                3. **Audio:** Veo 3.1 generates audio. Include specific audio cues (Dialogue, SFX, Ambient) in the prompt.
-                  - Format: "SFX: thunder cracks.", "Ambient: busy street noise."
+                  - Dialogue Format: "Character says: Dialogue" (Use COLON, not quotes, to prevent subtitles).
+                  - SFX Format: "SFX: thunder cracks."
                4. **Lighting & Style:** Define the lighting (e.g., "Cinematic lighting, volumetric fog, teal and orange palette").
                5. **Structure:** The environment must remain consistent (same location) but viewed from different angles.
-               6. **Duration:** Each shot is exactly 5 seconds.
-               7. **Negative Prompts:** Implicitly avoid text, watermarks, and blurry footage by describing high quality.
+               6. **Duration:** Each shot is exactly 5 seconds. Focus on ONE main action per shot.
+               7. **Negative Prompts:** Implicitly avoid text/watermarks. Append "(no subtitles)" to end of prompt.
                `,
     config: {
       responseMimeType: 'application/json',
@@ -181,16 +182,17 @@ export const runDirectorAgent = async (userPrompt: string): Promise<DirectorPlan
       systemInstruction: `You are a Meta-Prompting Engine for Google Veo 3.1.
       
       Your goal is to output a JSON production plan where EACH 'prompt' field is a standalone, professional-grade video prompt following this formula:
-      "[Camera Movement], [Shot Type]. [Subject Description]. [Action]. [Environment/Context]. [Lighting/Style]. [Audio Cues]."
+      "[Camera Movement], [Shot Type]. [Subject Description]. [Action]. [Environment/Context]. [Lighting/Style]. [Audio Cues]. (no subtitles)"
 
       EXAMPLE PROMPT OUTPUT:
-      "Low angle, slow dolly in. A weathered cyber-samurai with neon blue dreadlocks and scarred chrome skin stands stoically. He slowly unsheathes a glowing katana, rain dripping from the blade. A grimy neon-lit alleyway in Neo-Tokyo at midnight, heavy rain falling. High contrast cyberpunk aesthetic, wet surfaces, lens flare. SFX: Rain hitting pavement, metallic sheath scrape."
+      "Low angle, slow dolly in. A weathered cyber-samurai with neon blue dreadlocks stands stoically. He slowly unsheathes a glowing katana. A grimy neon-lit alleyway in Neo-Tokyo. High contrast cyberpunk aesthetic. SFX: Rain hitting pavement. The samurai says: Honor is earned. (no subtitles)"
 
       CRITICAL:
       - The 'subject_prompt' field must be a reusable Character Bible entry.
       - The 'environment_prompt' field must be a reusable Location Bible entry.
-      - In the 'shots' array, every 'prompt' MUST include the full subject description again to ensure the video model doesn't hallucinate a new person.
-      - Select diverse Camera Angles (e.g., Bird's-eye, Dutch angle) and Movements (Truck, Crane) to make the sequence dynamic.
+      - In the 'shots' array, every 'prompt' MUST include the full subject description again.
+      - **Dialogue Rule:** Use "Subject says: Words". DO NOT use quotation marks for dialogue.
+      - **Action Rule:** Use a SINGLE, CONCRETE verb for the main action (e.g., "jumps", "runs"). Avoid sequential tasks.
       `
     }
   });
@@ -418,7 +420,7 @@ export const runShotDraftingAgent = async (
   // Currently, we append it to the positive prompt with "Avoid:" or just describe high quality.
   // The guide suggests using "negative terms" in a separate field if possible, or ensuring the positive prompt is specific enough.
   // We'll append a standard quality assurance suffix.
-  finalPrompt += " High quality, 4k, photorealistic, no text overlays, no watermarks, clear focus.";
+  finalPrompt += " High quality, 4k, photorealistic, clear focus. (no subtitles)";
 
   if (feedback) {
     finalPrompt = `CRITICAL DIRECTOR NOTE: ${feedback}. ${finalPrompt}`;
