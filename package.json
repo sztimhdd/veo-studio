@@ -29,7 +29,6 @@
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "jsdom": "^28.0.0",
-    "oh-my-opencode": "^3.5.2",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
     "vitest": "^4.0.18"
