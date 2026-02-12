@@ -104,6 +104,11 @@ export interface VideoArtifact {
   shotId?: string; // Link back to the shot params
   userFeedback?: string; // Human critique
   version?: number; // Take 1, 2, 3...
+  
+  // New fields for Phase 4 (Refining)
+  keyframes?: string[]; // Base64 strings of extracted frames
+  consistencyScore?: number; // 0-1 score
+  selectedKeyframe?: string; // Base64 of the best frame
 }
 
 export interface ProductionArtifacts {

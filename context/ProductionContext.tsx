@@ -30,10 +30,11 @@ type Action =
   | { type: 'UPDATE_SHOT', payload: { index: number, shot: VideoArtifact } }
   | { type: 'ADD_LOG', payload: Omit<LogEntry, 'timestamp'> }
   | { type: 'SET_ERROR', payload: string }
-  | { type: 'RESET' };
+  | { type: 'RESET' }
+  | { type: 'START_REFINEMENT', payload: { video: VideoArtifact } };
 
 // Reducer
-const reducer = (state: ProductionState, action: Action): ProductionState => {
+export const reducer = (state: ProductionState, action: Action): ProductionState => {
   switch (action.type) {
     case 'START_PIPELINE':
       return { ...initialState, phase: 'PLANNING' };
@@ -53,6 +54,17 @@ const reducer = (state: ProductionState, action: Action): ProductionState => {
           ...state.artifacts,
           shots: newShots
         }
+      };
+    case 'START_REFINEMENT':
+      return {
+        ...state,
+        phase: 'REFINING',
+        logs: [...state.logs, {
+          timestamp: Date.now(),
+          agent: 'Engineer',
+          phase: 'REFINING',
+          message: `Refining shot (ID: ${action.payload.video.shotId})...`
+        }]
       };
     case 'ADD_LOG':
       return {

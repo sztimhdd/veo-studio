@@ -19,7 +19,7 @@ import {
   runArtistAgent,
   runDirectorAgent,
   runProductionPipeline,
-  runRefinerAgent,
+  runRefinementPhase,
   runShotDraftingAgent
 } from './services/pipelineService';
 import {
@@ -119,6 +119,39 @@ const StudioContent: React.FC<{
     } catch (e: any) {
       console.error(e);
       dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Regeneration failed: ${e.message}`, phase: 'ERROR' } });
+    }
+  };
+
+  const handleRefineShot = async (index: number) => {
+    if (!state.artifacts.plan || !state.artifacts.assets || !state.artifacts.shots[index]) return;
+    
+    dispatch({ 
+      type: 'START_REFINEMENT', 
+      payload: { video: state.artifacts.shots[index] } 
+    });
+    
+    try {
+      const refinedShot = await runRefinementPhase(
+        state.artifacts.shots[index],
+        state.artifacts.plan,
+        state.artifacts.assets
+      );
+      
+      dispatch({ 
+        type: 'UPDATE_SHOT', 
+        payload: { 
+          index, 
+          shot: refinedShot
+        } 
+      });
+      
+      dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Refinement complete: Consistency Score ${((refinedShot.consistencyScore || 0) * 100).toFixed(1)}%`, phase: 'COMPLETE' } });
+      dispatch({ type: 'SET_PHASE', payload: 'COMPLETE' });
+      
+    } catch (e: any) {
+      console.error(e);
+      dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Refinement failed: ${e.message}`, phase: 'ERROR' } });
+      dispatch({ type: 'SET_ERROR', payload: e.message });
     }
   };
 
@@ -228,7 +261,10 @@ const StudioContent: React.FC<{
               <span className="text-xs text-green-500 font-mono">LIVE SESSION</span>
             </div>
           </div>
-          <PipelineVisualizer onRegenerate={handleRegenerateShot} />
+          <PipelineVisualizer 
+            onRegenerate={handleRegenerateShot} 
+            onRefine={handleRefineShot} 
+          />
         </div>
       )}
     </div>

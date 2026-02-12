@@ -9,12 +9,14 @@ import { ArrowRightIcon, SparklesIcon, ChevronDownIcon, TvIcon, VideoIcon, FileI
 
 interface PipelineVisualizerProps {
     onRegenerate?: (index: number, feedback: string) => Promise<void>;
+    onRefine?: (index: number) => Promise<void>;
 }
 
-const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate }) => {
+const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate, onRefine }) => {
     const { state } = useProduction();
     const logsEndRef = useRef<HTMLDivElement>(null);
     const [regeneratingIndices, setRegeneratingIndices] = useState<Set<number>>(new Set());
+    const [refiningIndices, setRefiningIndices] = useState<Set<number>>(new Set());
     const [feedbackInputs, setFeedbackInputs] = useState<Record<number, string>>({});
     const [showFeedbackFor, setShowFeedbackFor] = useState<number | null>(null);
 
@@ -32,6 +34,21 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate })
                 await onRegenerate(index, feedback);
             } finally {
                 setRegeneratingIndices(prev => {
+                    const next = new Set(prev);
+                    next.delete(index);
+                    return next;
+                });
+            }
+        }
+    };
+
+    const handleRefineClick = async (index: number) => {
+        if (onRefine) {
+            setRefiningIndices(prev => new Set(prev).add(index));
+            try {
+                await onRefine(index);
+            } finally {
+                setRefiningIndices(prev => {
                     const next = new Set(prev);
                     next.delete(index);
                     return next;
@@ -225,11 +242,32 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate })
                                                                 </div>
                                                             </div>
                                                         ) : (
-                                                            <button 
-                                                                onClick={() => setShowFeedbackFor(index)}
-                                                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-full shadow-xl flex items-center gap-2 transform transition-transform active:scale-95">
-                                                                <MessageSquareIcon className="w-4 h-4" /> Add Feedback
-                                                            </button>
+                                                            <div className="flex flex-col gap-2 w-full px-4">
+                                                                <button 
+                                                                    onClick={() => setShowFeedbackFor(index)}
+                                                                    className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold rounded-full shadow-xl flex items-center justify-center gap-2 transform transition-transform active:scale-95">
+                                                                    <MessageSquareIcon className="w-4 h-4" /> Add Feedback
+                                                                </button>
+                                                                
+                                                                {/* Only show Refine button if not already refined and not regenerating */}
+                                                                {!shotResult.selectedKeyframe && (
+                                                                    <button 
+                                                                        onClick={() => handleRefineClick(index)}
+                                                                        disabled={refiningIndices.has(index)}
+                                                                        className="w-full px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-full shadow-xl flex items-center justify-center gap-2 transform transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
+                                                                        {refiningIndices.has(index) ? (
+                                                                            <>
+                                                                                <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                                                                Refining...
+                                                                            </>
+                                                                        ) : (
+                                                                            <>
+                                                                                <SparklesIcon className="w-4 h-4" /> Refine & Master (4K)
+                                                                            </>
+                                                                        )}
+                                                                    </button>
+                                                                )}
+                                                            </div>
                                                         )}
                                                     </div>
                                                 </>
@@ -248,6 +286,11 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate })
                                                 </div>
                                             )}
 
+                                            {shotResult?.selectedKeyframe && (
+                                                <div className="absolute top-2 right-2 px-2 py-1 bg-emerald-600/90 backdrop-blur rounded text-[9px] font-bold text-white border border-white/20 flex items-center gap-1 shadow-lg">
+                                                    <SparklesIcon className="w-3 h-3" /> 4K MASTERED
+                                                </div>
+                                            )}
                                             {/* Overlay Shot Info */}
                                             {shotPlan && (
                                                 <div className="absolute top-2 left-2 px-2 py-1 bg-black/60 backdrop-blur rounded text-[9px] font-mono text-white border border-white/10 flex items-center gap-2">

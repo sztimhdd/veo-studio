@@ -62,11 +62,72 @@ interface EvalReport {
 *   **Task:** Frame-by-frame analysis and quality gate enforcement.
 
 ## 4. Engineering Constraints & Stability
+
+### 4.1. Quota Management & Error Handling
 *   **Sequential Pipeline (QuotaGuard):** Implements **Exponential Backoff with Jitter** to handle `429 Resource Exhausted` errors gracefully.
     *   **Retry Strategy:** 5 attempts with increasing delays (1s, 2s, 4s, 8s...) capped at 60s.
     *   **Jitter:** +/- 20% random variance prevents "thundering herd" retry storms.
 *   **State Persistence:** Use of `ProductionContext` to hold the "Bible" and "Film Strip" across the DAG phases.
 *   **Cleanup:** Automated revocation of ObjectURLs to prevent memory leaks during long-running refinement loops.
 
-## 5. Future Implementation: MCP Tool Servers
+### 4.2. Testing Framework
+
+**Current Status:** Testing framework is fully operational with **Vitest** + **@testing-library/react**.
+
+- **Framework:** Vitest (native Vite integration, fast execution)
+- **UI Testing:** @testing-library/react + @testing-library/jest-dom
+- **Environment:** jsdom for browser simulation
+
+**Test Commands:**
+```bash
+npm run test        # Run tests in watch mode
+npm run test:run    # Run tests once (CI mode)
+npx vitest <file>   # Run single test file
+```
+
+**Current Test Coverage:**
+*   **ProductionContext (19 tests):** Full reducer coverage including all actions (START_PIPELINE, SET_PHASE, UPDATE_ARTIFACTS, UPDATE_SHOT, ADD_LOG, SET_ERROR, RESET)
+*   **PipelineService (9 tests):** Quota management utilities (getRetryDelay, waitForQuota) with timer mocking
+
+**Testing Architecture:**
+*   **Setup:** `test/setup.ts` - Global mocks for Google GenAI SDK, automatic cleanup
+*   **Mocks:** `__mocks__/@google/genai.ts` - Manual mock to prevent API costs
+*   **Pattern:** Pure utility functions exported for unit testing; external dependencies mocked via `vi.mock()`
+
+**Best Practices:**
+*   Export pure utility functions from services for unit testing
+*   Use `vi.useFakeTimers()` for time-based tests
+*   Mock `@google/genai` to avoid API costs during testing
+*   Test files: `*.test.ts` or `*.test.tsx` alongside source files
+
+## 5. Infrastructure & Deployment (CI/CD)
+
+The project leverages a fully automated CI/CD pipeline using **GitHub Actions** and **Google Cloud Run**.
+
+### 5.1. Hosting Strategy
+*   **Platform:** GCP Cloud Run (Serverless Container).
+*   **Region:** `us-central1`.
+*   **Service Specs:**
+    *   **CPU:** 1 vCPU.
+    *   **Memory:** 256Mi (optimized for static asset serving).
+    *   **Scaling:** 0 (min) to 3 (max) instances.
+    *   **Access:** Public (`--allow-unauthenticated`).
+
+### 5.2. CI/CD Pipeline
+Defined in `.github/workflows/deploy.yml`:
+1.  **Trigger:** Push to `main` branch or manual `workflow_dispatch`.
+2.  **Auth:** Workload Identity Federation (via `GCP_SA_KEY` secret).
+3.  **Build:**
+    *   Uses **Docker** multi-stage build.
+    *   Injects `GEMINI_API_KEY` as a build argument (`ARG`).
+4.  **Registry:** Pushes image to Google Artifact Registry (`us-central1-docker.pkg.dev/...`).
+5.  **Deploy:** Updates the Cloud Run service with the new image tag (commit SHA).
+
+### 5.3. Container Architecture
+*   **Base Image:** `node:20-alpine` (Build stage) -> `nginx:alpine` (Runtime stage).
+*   **Serving:** Nginx serves the React SPA static build (`dist/`).
+*   **Routing:** SPA-aware routing (`try_files $uri /index.html`) handled in `nginx.conf`.
+*   **Caching:** Aggressive caching (1 year) for hashed assets (`js`, `css`, `images`).
+
+## 6. Future Implementation: MCP Tool Servers
 The architecture is designed to move toward an **MCP (Model Context Protocol)** Tool Server model, where agents can dynamically call specialized tools for scene cutting, audio synthesis, and compliance checking.

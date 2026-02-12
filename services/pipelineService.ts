@@ -31,7 +31,7 @@ const QUOTAS = {
   }
 };
 
-async function waitForQuota(type: keyof typeof QUOTAS) {
+export async function waitForQuota(type: keyof typeof QUOTAS) {
   const quota = QUOTAS[type];
   const now = Date.now();
   const timeSinceLast = now - quota.lastCall;
@@ -46,11 +46,17 @@ async function waitForQuota(type: keyof typeof QUOTAS) {
 }
 
 // Calculate delay: 1000ms * 2^attempt +/- 20% jitter, capped at 60s
-function getRetryDelay(attempt: number): number {
+export function getRetryDelay(attempt: number): number {
   const baseDelay = 1000 * Math.pow(2, attempt);
   const jitter = baseDelay * 0.2 * (Math.random() * 2 - 1); // +/- 20% random jitter
   return Math.min(Math.max(baseDelay + jitter, 500), 60000); // Clamp between 0.5s and 60s
 }
+
+import imagehash from 'imagehash-web';
+
+// Destructure functions from the default export array
+// [ahash, dhash, phash, whash, cropResistantHash, ImageHash]
+const [ahash, dhash, phash, whash, cropResistantHash, ImageHash] = imagehash as any;
 
 // --- UTILITIES ---
 
@@ -66,6 +72,113 @@ const blobToBase64 = (blob: Blob): Promise<string> => {
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
+};
+
+// Helper: get video duration
+export const getVideoDuration = async (blob: Blob): Promise<number> => {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(video.src);
+      resolve(video.duration);
+    };
+    video.onerror = () => reject(new Error("Failed to load video metadata"));
+    video.src = URL.createObjectURL(blob);
+  });
+};
+
+/**
+ * Extracts 3 keyframes (Start, Mid, End) from a video blob.
+ */
+export const extractKeyframes = async (videoBlob: Blob): Promise<string[]> => {
+  try {
+    const duration = await getVideoDuration(videoBlob);
+    // Avoid exact 0 or end to prevent black frames
+    const times = [0.1, duration / 2, Math.max(0.1, duration - 0.2)]; 
+    
+    // Extract in parallel
+    const blobs = await Promise.all(times.map(t => extractFrameFromBlob(videoBlob, t)));
+    return Promise.all(blobs.map(blobToBase64));
+  } catch (e) {
+    console.error("Keyframe extraction failed:", e);
+    return [];
+  }
+};
+
+/**
+ * Calculates consistency score (0-1) between a frame and a reference asset using perceptual hashing.
+ */
+export const calculateConsistency = async (frameBase64: string, referenceAsset: AssetItem): Promise<number> => {
+  if (!referenceAsset.base64) return 0;
+  
+  try {
+    // Convert base64 to ImageBitmap or HTMLImageElement for imagehash-web
+    const frameImg = new Image();
+    frameImg.src = `data:image/jpeg;base64,${frameBase64}`;
+    await new Promise(r => { frameImg.onload = r; });
+
+    const refImg = new Image();
+    refImg.src = `data:image/jpeg;base64,${referenceAsset.base64}`;
+    await new Promise(r => { refImg.onload = r; });
+
+    // Calculate pHash (8 bits)
+    const frameHash = await phash(frameImg, 8);
+    const refHash = await phash(refImg, 8);
+    
+    // Calculate Hamming Distance using the ImageHash object's method
+    // Note: The library returns an ImageHash object which has a .hammingDistance() method
+    const distance = frameHash.hammingDistance(refHash);
+    
+    // Normalize: max distance for 64-bit hash (8*8) is 64
+    return 1 - (distance / 64);
+  } catch (e) {
+    console.error("Hash calculation failed:", e);
+    return 0; 
+  }
+};
+
+export const runRefinementPhase = async (
+  draftVideo: VideoArtifact,
+  plan: DirectorPlan,
+  assets: AssetItem[]
+): Promise<VideoArtifact> => {
+  console.log('[Refining] Starting analysis...');
+  
+  // 1. Extract Keyframes
+  const keyframes = await extractKeyframes(draftVideo.blob);
+  if (keyframes.length === 0) throw new Error("Failed to extract keyframes");
+  
+  // 2. Consistency Check (Score against Character Bible)
+  const characterAsset = assets.find(a => a.type === 'character') || assets[0];
+  const scores = await Promise.all(keyframes.map(k => 
+    calculateConsistency(k, characterAsset)
+  ));
+  
+  console.log('[Refining] Consistency Scores:', scores);
+  
+  // 3. Select Best Frame
+  const bestIndex = scores.indexOf(Math.max(...scores));
+  const bestKeyframeBase64 = keyframes[bestIndex];
+  const bestScore = scores[bestIndex];
+  
+  console.log(`[Refining] Selected frame ${bestIndex} with score ${bestScore.toFixed(2)}`);
+  
+  const bestFrameBlob = base64ToBlob(bestKeyframeBase64, 'image/jpeg');
+  
+  // 4. Upscale (Gemini Vision)
+  const upscaledBlob = await runRefinerAgent(bestFrameBlob, plan);
+  const upscaledBase64 = await blobToBase64(upscaledBlob);
+  
+  // 5. Master Render (Veo)
+  const finalVideo = await runMasteringAgent(plan, upscaledBlob);
+  
+  return {
+    ...finalVideo,
+    keyframes,
+    consistencyScore: bestScore,
+    selectedKeyframe: upscaledBase64 // Store the upscaled version as the reference
+  };
 };
 
 /**
