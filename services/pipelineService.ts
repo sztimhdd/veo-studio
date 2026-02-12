@@ -138,13 +138,14 @@ export const runDirectorAgent = async (userPrompt: string): Promise<DirectorPlan
                [1. Cinematography] + [2. Subject] + [3. Action] + [4. Context] + [5. Style & Ambiance]
 
                GUIDELINES:
-               1. **Cinematography:** Specify Shot Type (Wide, Medium, Close-up), Camera Angle (Eye-level, Low-angle), and Movement (Pan, Tilt, Dolly, Static).
+               1. **Cinematography:** Specify Shot Type (Wide, Medium, Close-up), Camera Angle (Eye-level, Low-angle, High-angle, Bird's-eye, Dutch angle), and Movement (Pan, Tilt, Dolly, Truck, Crane, Handheld, Arc, Static). Use "Lens Effects" if needed (Shallow depth of field, Rack focus, Fisheye).
                2. **Subject Consistency:** Use the EXACT SAME detailed physical description for the main character in EVERY shot to prevent identity drift.
                3. **Audio:** Veo 3.1 generates audio. Include specific audio cues (Dialogue, SFX, Ambient) in the prompt.
                   - Format: "SFX: thunder cracks.", "Ambient: busy street noise."
                4. **Lighting & Style:** Define the lighting (e.g., "Cinematic lighting, volumetric fog, teal and orange palette").
                5. **Structure:** The environment must remain consistent (same location) but viewed from different angles.
                6. **Duration:** Each shot is exactly 5 seconds.
+               7. **Negative Prompts:** Implicitly avoid text, watermarks, and blurry footage by describing high quality.
                `,
     config: {
       responseMimeType: 'application/json',
@@ -161,6 +162,7 @@ export const runDirectorAgent = async (userPrompt: string): Promise<DirectorPlan
       - The 'subject_prompt' field must be a reusable Character Bible entry.
       - The 'environment_prompt' field must be a reusable Location Bible entry.
       - In the 'shots' array, every 'prompt' MUST include the full subject description again to ensure the video model doesn't hallucinate a new person.
+      - Select diverse Camera Angles (e.g., Bird's-eye, Dutch angle) and Movements (Truck, Crane) to make the sequence dynamic.
       `
     }
   });
@@ -382,6 +384,13 @@ export const runShotDraftingAgent = async (
   if (!finalPrompt.includes(plan.visual_style)) {
     finalPrompt += ` Style: ${plan.visual_style}.`;
   }
+
+  // Append Negative Prompt Guardrails (implicitly or explicitly if supported)
+  // For Veo 3.1, a strong positive prompt is best, but we can add exclusions if the model supports it.
+  // Currently, we append it to the positive prompt with "Avoid:" or just describe high quality.
+  // The guide suggests using "negative terms" in a separate field if possible, or ensuring the positive prompt is specific enough.
+  // We'll append a standard quality assurance suffix.
+  finalPrompt += " High quality, 4k, photorealistic, no text overlays, no watermarks, clear focus.";
 
   if (feedback) {
     finalPrompt = `CRITICAL DIRECTOR NOTE: ${feedback}. ${finalPrompt}`;
