@@ -111,6 +111,7 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate })
                     <PhaseIndicator phase="PLANNING" current={state.phase} label="Director" />
                     <PhaseIndicator phase="ASSET_GEN" current={state.phase} label="Artist" />
                     <PhaseIndicator phase="DRAFTING" current={state.phase} label="Draft" />
+                    <PhaseIndicator phase="CRITIQUE" current={state.phase} label="Critique" />
                     <PhaseIndicator phase="REFINING" current={state.phase} label="Refine" />
                     <PhaseIndicator phase="RENDERING" current={state.phase} label="Render" />
                 </div>
@@ -282,7 +283,94 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate })
             </div>
 
 
-            {/* 4. Bottom Panel: Terminal Logs — Full Width */}
+            {/* 4. AI Critic Evaluation Panel */}
+            {(state.phase === 'CRITIQUE' || state.phase === 'COMPLETE') && state.artifacts.evalReport && (
+                <div className="bg-gray-900/80 border border-gray-800 rounded-xl p-4">
+                    <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-xs font-bold text-white uppercase tracking-widest flex items-center gap-2">
+                            <svg className="w-4 h-4 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            AI Critic Evaluation
+                        </h3>
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-400">Overall Score:</span>
+                            <span className={`text-sm font-bold ${state.artifacts.evalReport.overallScore >= 8.5 ? 'text-emerald-400' : state.artifacts.evalReport.overallScore >= 7 ? 'text-yellow-400' : 'text-red-400'}`}>
+                                {state.artifacts.evalReport.overallScore.toFixed(1)}/10
+                            </span>
+                            {state.artifacts.evalReport.passed && (
+                                <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] rounded-full border border-emerald-500/50">
+                                    PASSED
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-3 gap-3 mb-3">
+                        {state.artifacts.evalReport.shotEvaluations.map((eval_, idx) => (
+                            <div key={idx} className="bg-gray-800/50 border border-gray-700/50 rounded-lg p-2">
+                                <div className="flex items-center justify-between mb-1">
+                                    <span className="text-[10px] text-gray-400 uppercase">Shot {idx + 1}</span>
+                                    <span className={`text-xs font-bold ${eval_.overallScore >= 8.5 ? 'text-emerald-400' : eval_.overallScore >= 7 ? 'text-yellow-400' : 'text-red-400'}`}>
+                                        {eval_.overallScore.toFixed(1)}
+                                    </span>
+                                </div>
+                                <div className="space-y-0.5">
+                                    <div className="flex justify-between text-[9px]">
+                                        <span className="text-gray-500">Temporal</span>
+                                        <span className="text-gray-300">{eval_.temporalConsistencyScore}</span>
+                                    </div>
+                                    <div className="flex justify-between text-[9px]">
+                                        <span className="text-gray-500">Semantic</span>
+                                        <span className="text-gray-300">{eval_.semanticAlignmentScore}</span>
+                                    </div>
+                                    <div className="flex justify-between text-[9px]">
+                                        <span className="text-gray-500">Technical</span>
+                                        <span className="text-gray-300">{eval_.technicalQualityScore}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                    
+                    {/* Motion Lock Control */}
+                    {state.phase === 'CRITIQUE' && (
+                        <div className="flex items-center justify-between bg-gray-800/30 border border-gray-700/50 rounded-lg p-3">
+                            <div>
+                                <p className="text-xs text-white font-medium">
+                                    {state.artifacts.evalReport.passed 
+                                        ? 'All quality checks passed. Ready to lock motion.'
+                                        : 'Some shots need attention. Review and approve or request changes.'}
+                                </p>
+                                {state.artifacts.evalReport.shotEvaluations.some(e => e.flaws.length > 0) && (
+                                    <div className="mt-1 text-[10px] text-gray-400">
+                                        Detected issues: {state.artifacts.evalReport.shotEvaluations.flatMap(e => e.flaws).map(f => f.type).filter((v, i, a) => a.indexOf(v) === i).join(', ')}
+                                    </div>
+                                )}
+                            </div>
+                            {!state.artifacts.motionLocked && (
+                                <button
+                                    onClick={() => {
+                                        // This would need to be passed down from parent
+                                        // For now, just log the intention
+                                        console.log('Motion lock requested');
+                                    }}
+                                    className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-full transition-colors flex items-center gap-1"
+                                >
+                                    <CheckCircleIcon className="w-3 h-3" /> Lock Motion
+                                </button>
+                            )}
+                            {state.artifacts.motionLocked && (
+                                <span className="px-3 py-1 bg-emerald-500/20 text-emerald-400 text-xs rounded-full border border-emerald-500/50 flex items-center gap-1">
+                                    <CheckCircleIcon className="w-3 h-3" /> Motion Locked
+                                </span>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* 5. Bottom Panel: Terminal Logs — Full Width */}
             <div className="bg-black border border-gray-800 rounded-xl p-4 font-mono text-xs h-36 overflow-hidden flex flex-col flex-shrink-0">
                 <div className="flex items-center gap-2 border-b border-gray-800 pb-2 mb-2">
                     <div className="w-2 h-2 rounded-full bg-red-500" />
@@ -296,7 +384,8 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate })
                             <span className="text-gray-600 min-w-[60px]">{new Date(log.timestamp).toLocaleTimeString([], { hour12: false, second: '2-digit', minute: '2-digit' })}</span>
                             <span className={`font-bold min-w-[80px] ${log.agent === 'Director' ? 'text-indigo-400' :
                                 log.agent === 'Artist' ? 'text-pink-400' :
-                                    log.agent === 'Engineer' ? 'text-amber-400' : 'text-gray-500'
+                                    log.agent === 'Engineer' ? 'text-amber-400' :
+                                        log.agent === 'Critic' ? 'text-yellow-400' : 'text-gray-500'
                                 }`}>[{log.agent}]</span>
                             <span>{log.message}</span>
                         </div>

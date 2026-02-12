@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 import React, { createContext, useContext, useReducer, ReactNode } from 'react';
-import { LogEntry, ProductionArtifacts, ProductionState, PipelinePhase, VideoArtifact } from '../types';
+import { LogEntry, ProductionArtifacts, ProductionState, PipelinePhase, VideoArtifact, ShotEvaluation } from '../types';
 
 // Initial State
 const initialState: ProductionState = {
@@ -15,7 +15,9 @@ const initialState: ProductionState = {
     shots: [],
     draftVideo: null,
     anchorFrame: null,
-    finalVideo: null
+    finalVideo: null,
+    evalReport: null,
+    motionLocked: false
   },
 
   logs: [],
@@ -28,6 +30,8 @@ type Action =
   | { type: 'SET_PHASE', payload: PipelinePhase }
   | { type: 'UPDATE_ARTIFACTS', payload: Partial<ProductionArtifacts> }
   | { type: 'UPDATE_SHOT', payload: { index: number, shot: VideoArtifact } }
+  | { type: 'SET_MOTION_LOCK', payload: boolean }
+  | { type: 'SET_EVALUATION', payload: { index: number, evaluation: ShotEvaluation } }
   | { type: 'ADD_LOG', payload: Omit<LogEntry, 'timestamp'> }
   | { type: 'SET_ERROR', payload: string }
   | { type: 'RESET' };
@@ -52,6 +56,27 @@ const reducer = (state: ProductionState, action: Action): ProductionState => {
         artifacts: {
           ...state.artifacts,
           shots: newShots
+        }
+      };
+    case 'SET_MOTION_LOCK':
+      return {
+        ...state,
+        artifacts: {
+          ...state.artifacts,
+          motionLocked: action.payload
+        }
+      };
+    case 'SET_EVALUATION':
+      const evaluatedShots = [...state.artifacts.shots];
+      evaluatedShots[action.payload.index] = {
+        ...evaluatedShots[action.payload.index],
+        evaluation: action.payload.evaluation
+      };
+      return {
+        ...state,
+        artifacts: {
+          ...state.artifacts,
+          shots: evaluatedShots
         }
       };
     case 'ADD_LOG':

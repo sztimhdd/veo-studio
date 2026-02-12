@@ -67,6 +67,7 @@ export type PipelinePhase =
   | 'PLANNING'      // Director Agent
   | 'ASSET_GEN'     // Material Agent
   | 'DRAFTING'      // Veo Fast
+  | 'CRITIQUE'      // AI Critic Evaluation (Phase 3)
   | 'REFINING'      // Frame Extraction + Gemini Pro Vision Upscale
   | 'RENDERING'     // Veo High Quality
   | 'COMPLETE'
@@ -104,6 +105,34 @@ export interface VideoArtifact {
   shotId?: string; // Link back to the shot params
   userFeedback?: string; // Human critique
   version?: number; // Take 1, 2, 3...
+  evaluation?: ShotEvaluation; // AI Critic evaluation results
+  motionLocked?: boolean; // Whether this shot's motion is locked
+}
+
+// --- AI CRITIC TYPES (Phase 3) ---
+
+export interface ShotEvaluation {
+  variantId: string;
+  temporalConsistencyScore: number; // 0-10
+  semanticAlignmentScore: number;   // 0-10
+  technicalQualityScore: number;    // 0-10
+  overallScore: number;             // Weighted average
+  flaws: Array<{
+    timestamp: number;
+    type: 'artifact' | 'drift' | 'glitch' | 'lighting' | 'audio';
+    description: string;
+  }>;
+  recommendations: string[];
+  passed: boolean; // true if overallScore >= 8.5
+}
+
+export interface EvalReport {
+  shotEvaluations: ShotEvaluation[];
+  temporalConsistencyScore: number; // Average across all shots
+  semanticAlignment: number;        // Average across all shots
+  characterFidelity: number;        // Cross-shot consistency
+  overallScore: number;
+  passed: boolean;
 }
 
 export interface ProductionArtifacts {
@@ -117,6 +146,8 @@ export interface ProductionArtifacts {
     blob: Blob;       // The high-res blob
   } | null;
   finalVideo: VideoArtifact | null;
+  evalReport: EvalReport | null; // AI Critic evaluation report (Phase 3)
+  motionLocked: boolean; // Whether motion is locked across all shots
 }
 
 
@@ -124,7 +155,7 @@ export interface LogEntry {
   timestamp: number;
   phase: PipelinePhase;
   message: string;
-  agent: 'Director' | 'Artist' | 'Engineer' | 'System';
+  agent: 'Director' | 'Artist' | 'Engineer' | 'Critic' | 'System';
 }
 
 export interface ProductionState {

@@ -22,6 +22,7 @@ import {
   runRefinerAgent,
   runShotDraftingAgent
 } from './services/pipelineService';
+import { runContinuitySupervisor } from './services/criticService';
 import {
   AppState,
   AspectRatio,
@@ -77,8 +78,44 @@ const StudioContent: React.FC<{
       const shots = await runProductionPipeline(plan, assets);
 
       dispatch({ type: 'UPDATE_ARTIFACTS', payload: { shots } });
-      dispatch({ type: 'SET_PHASE', payload: 'COMPLETE' });
-      dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: 'Dailies are ready for review.', phase: 'COMPLETE' } });
+      
+      // 4. AI CRITIC EVALUATION (Phase 3)
+      dispatch({ type: 'SET_PHASE', payload: 'CRITIQUE' });
+      dispatch({ type: 'ADD_LOG', payload: { agent: 'Critic', message: 'Analyzing shots for continuity and quality...', phase: 'CRITIQUE' } });
+      
+      try {
+        const evalReport = await runContinuitySupervisor(shots, plan);
+        dispatch({ type: 'UPDATE_ARTIFACTS', payload: { evalReport } });
+        
+        // Log individual shot scores
+        evalReport.shotEvaluations.forEach((eval_, idx) => {
+          dispatch({ 
+            type: 'ADD_LOG', 
+            payload: { 
+              agent: 'Critic', 
+              message: `Shot ${idx + 1}: Score ${eval_.overallScore}/10 - ${eval_.passed ? 'PASSED' : 'NEEDS REVIEW'}`, 
+              phase: 'CRITIQUE' 
+            } 
+          });
+        });
+        
+        if (evalReport.passed) {
+          // Auto-approve and lock motion
+          dispatch({ type: 'SET_MOTION_LOCK', payload: true });
+          dispatch({ type: 'SET_PHASE', payload: 'COMPLETE' });
+          dispatch({ type: 'ADD_LOG', payload: { agent: 'Critic', message: `All shots passed with ${evalReport.overallScore}/10. Motion locked.`, phase: 'COMPLETE' } });
+          dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: 'Dailies are ready for review.', phase: 'COMPLETE' } });
+        } else {
+          // Enter critique phase - wait for human review
+          dispatch({ type: 'ADD_LOG', payload: { agent: 'Critic', message: `Overall score: ${evalReport.overallScore}/10. Human review required.`, phase: 'CRITIQUE' } });
+          dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: 'Please review AI evaluation and approve or request changes.', phase: 'CRITIQUE' } });
+        }
+      } catch (e: any) {
+        console.warn('[Critic] Evaluation failed:', e);
+        // Continue without AI critic if it fails
+        dispatch({ type: 'SET_PHASE', payload: 'COMPLETE' });
+        dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: 'Dailies are ready for review (AI critic unavailable).', phase: 'COMPLETE' } });
+      }
 
     } catch (e: any) {
       console.error(e);
