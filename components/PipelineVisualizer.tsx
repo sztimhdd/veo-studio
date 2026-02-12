@@ -194,23 +194,23 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate, o
                             </h3>
                             {state.phase === 'COMPLETE' && (
                                 <div className="flex items-center gap-2 text-indigo-400 text-xs">
-                                    <SparklesIcon className="w-3 h-3" /> All shots consistent
+                                    <SparklesIcon className="w-3 h-3" /> All scenes consistent
                                 </div>
                             )}
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 h-full">
-                            {[0, 1, 2].map((index) => {
-                                const shotResult = state.artifacts.shots?.[index];
-                                const shotPlan = state.artifacts.plan?.shots?.[index];
+                            {state.artifacts.plan?.scenes?.map((scenePlan, index) => {
+                                const sceneResult = state.artifacts.shots?.[index];
+                                const isRegenerating = regeneratingIndices.has(index);
 
                                 return (
                                     <div key={index} className="flex flex-col gap-2 relative group">
                                         <div className="aspect-[9/16] md:aspect-video bg-gray-900 rounded-lg overflow-hidden border border-gray-800 relative group">
-                                            {shotResult && !regeneratingIndices.has(index) ? (
+                                            {sceneResult && !isRegenerating ? (
                                                 <>
                                                     <video
-                                                        src={shotResult.url}
+                                                        src={sceneResult.url}
                                                         controls
                                                         autoPlay
                                                         loop
@@ -232,7 +232,7 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate, o
                                                                     <button 
                                                                         onClick={() => handleRegenerateClick(index)}
                                                                         className="flex-grow py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold rounded flex items-center justify-center gap-1">
-                                                                        <RefreshCwIcon className="w-3 h-3" /> Regenerate Take {shotResult.version ? shotResult.version + 1 : 2}
+                                                                        <RefreshCwIcon className="w-3 h-3" /> Regenerate Take {sceneResult.version ? sceneResult.version + 1 : 2}
                                                                     </button>
                                                                     <button 
                                                                         onClick={() => setShowFeedbackFor(null)}
@@ -250,7 +250,7 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate, o
                                                                 </button>
                                                                 
                                                                 {/* Only show Refine button if not already refined and not regenerating */}
-                                                                {!shotResult.selectedKeyframe && (
+                                                                {!sceneResult.selectedKeyframe && (
                                                                     <button 
                                                                         onClick={() => handleRefineClick(index)}
                                                                         disabled={refiningIndices.has(index)}
@@ -273,11 +273,11 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate, o
                                                 </>
                                             ) : (
                                                 <div className="w-full h-full flex flex-col items-center justify-center">
-                                                    {(state.phase === 'DRAFTING' || regeneratingIndices.has(index)) ? (
+                                                    {(state.phase === 'DRAFTING' || isRegenerating) ? (
                                                         <>
                                                             <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mb-2"></div>
                                                             <span className="text-[9px] text-indigo-400 uppercase animate-pulse">
-                                                                {regeneratingIndices.has(index) ? `Rolling Take ${shotResult?.version ? shotResult.version + 1 : 2}...` : 'Rolling...'}
+                                                                {isRegenerating ? `Rolling Take ${sceneResult?.version ? sceneResult.version + 1 : 2}...` : 'Rolling...'}
                                                             </span>
                                                         </>
                                                     ) : (
@@ -286,31 +286,34 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate, o
                                                 </div>
                                             )}
 
-                                            {shotResult?.selectedKeyframe && (
+                                            {sceneResult?.selectedKeyframe && (
                                                 <div className="absolute top-2 right-2 px-2 py-1 bg-emerald-600/90 backdrop-blur rounded text-[9px] font-bold text-white border border-white/20 flex items-center gap-1 shadow-lg">
                                                     <SparklesIcon className="w-3 h-3" /> 4K MASTERED
                                                 </div>
                                             )}
-                                            {/* Overlay Shot Info */}
-                                            {shotPlan && (
+                                            {/* Overlay Scene Info */}
+                                            {scenePlan && (
                                                 <div className="absolute top-2 left-2 px-2 py-1 bg-black/60 backdrop-blur rounded text-[9px] font-mono text-white border border-white/10 flex items-center gap-2">
-                                                    SC01_SH0{index + 1} 
-                                                    {shotResult?.version && shotResult.version > 1 && (
-                                                        <span className="text-amber-400 font-bold border-l border-white/20 pl-2">TAKE {shotResult.version}</span>
+                                                    SCENE {index + 1} 
+                                                    <span className="text-gray-400">({scenePlan.duration_seconds}s)</span>
+                                                    {sceneResult?.version && sceneResult.version > 1 && (
+                                                        <span className="text-amber-400 font-bold border-l border-white/20 pl-2">TAKE {sceneResult.version}</span>
                                                     )}
                                                 </div>
                                             )}
                                         </div>
-                                        {shotPlan && (
+                                        {scenePlan && (
                                             <div className="flex flex-col gap-1">
-                                                <p className="text-[10px] text-gray-400 line-clamp-2 leading-tight">
-                                                    {shotPlan.camera_movement}
-                                                </p>
-                                                {shotResult?.userFeedback && (
+                                                <div className="flex items-center gap-2 text-[10px] text-gray-400">
+                                                    <span>{scenePlan.segments.length} segment{scenePlan.segments.length > 1 ? 's' : ''}</span>
+                                                    <span className="text-gray-600">•</span>
+                                                    <span className="line-clamp-1">{scenePlan.segments[0]?.camera_movement || 'Static'}</span>
+                                                </div>
+                                                {sceneResult?.userFeedback && (
                                                     <div className="flex gap-1 items-start bg-amber-900/10 border border-amber-500/20 rounded p-1.5 mt-1">
                                                         <MessageSquareIcon className="w-2.5 h-2.5 text-amber-500 mt-0.5" />
                                                         <p className="text-[9px] text-amber-200/70 italic leading-tight">
-                                                            "{shotResult.userFeedback}"
+                                                            "{sceneResult.userFeedback}"
                                                         </p>
                                                     </div>
                                                 )}

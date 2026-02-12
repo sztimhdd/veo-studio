@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 import { GoogleGenAI, Type, Schema, VideoGenerationReferenceImage, VideoGenerationReferenceType } from '@google/genai';
-import { AssetItem, DirectorPlan, ShotParams, Resolution, VideoArtifact } from '../types';
+import { AssetItem, DirectorPlan, SceneParams, ShotParams, Resolution, VideoArtifact } from '../types';
 
 
 // Initialize AI (API key handled by env)
@@ -246,66 +246,143 @@ export const runDirectorAgent = async (userPrompt: string): Promise<DirectorPlan
       subject_prompt: { type: Type.STRING, description: "Detailed visual description of the main character or subject. This will be used as a reference." },
       environment_prompt: { type: Type.STRING, description: "Detailed visual description of the background and atmosphere." },
       visual_style: { type: Type.STRING, description: "Cinematic style, lighting, and camera lens details (e.g., 'shot on 35mm film, volumetric lighting')." },
-      shots: {
+      scenes: {
         type: Type.ARRAY,
-        description: "A sequence of 3 distinct shots that tell the story.",
+        description: "Variable number of scenes (1-N) that tell the story. Each scene is max 8 seconds and can contain multiple timestamped segments.",
         items: {
           type: Type.OBJECT,
           properties: {
             id: { type: Type.STRING },
             order: { type: Type.NUMBER },
-            prompt: { type: Type.STRING, description: "Action occurring in this specific shot." },
-            camera_movement: { type: Type.STRING, description: "Specific camera instructions (e.g., 'Slow zoom in', 'Pan left to right', 'Low angle static')." },
-            duration_seconds: { type: Type.NUMBER, description: "Each shot must be 5 seconds." }
-
+            duration_seconds: { type: Type.NUMBER, description: "Total duration of this scene (1-8 seconds). YOU decide based on narrative pacing." },
+            segments: {
+              type: Type.ARRAY,
+              description: "Internal cuts within this scene using timestamp format [MM:SS-MM:SS]",
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  start_time: { type: Type.STRING, description: "Start timestamp (e.g., '00:00')" },
+                  end_time: { type: Type.STRING, description: "End timestamp (e.g., '00:04')" },
+                  prompt: { type: Type.STRING, description: "What happens in this segment" },
+                  camera_movement: { type: Type.STRING, description: "Camera instruction for this segment" }
+                },
+                required: ["start_time", "end_time", "prompt", "camera_movement"]
+              }
+            },
+            master_prompt: { type: Type.STRING, description: "Combined prompt with timestamps for Veo 3.1. Format: [00:00-00:04] Shot description. [00:04-00:08] Next shot description." }
           },
-          required: ["id", "order", "prompt", "camera_movement", "duration_seconds"]
+          required: ["id", "order", "duration_seconds", "segments", "master_prompt"]
         }
       },
-      reasoning: { type: Type.STRING, description: "Brief explanation of the shot sequence and creative flow." }
+      reasoning: { type: Type.STRING, description: "Brief explanation of why you chose this scene structure, pacing, and shot count to best serve the user's requirements." }
     },
-    required: ["subject_prompt", "environment_prompt", "visual_style", "shots", "reasoning"]
+    required: ["subject_prompt", "environment_prompt", "visual_style", "scenes", "reasoning"]
   };
 
     await waitForQuota('TEXT_GEN'); // Director uses Gemini 3 Pro (Text)
     const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
-    contents: `You are an expert Film Director and Cinematographer.
-               Your task is to break down this user narrative into a 3-shot "Dailies" sequence for Veo 3.1 video generation.
+    contents: `You are an expert Film Director and Cinematographer with complete creative control.
+               Analyze the user's requirements and break down the narrative into a DYNAMIC scene structure for Veo 3.1 video generation.
                User Prompt: "${userPrompt}"
                
-               *** CRITICAL: VEO 3.1 PROMPTING STANDARDS ***
-               You must generate HIGH-FIDELITY prompts using the specific 5-PART FORMULA:
-               [1. Cinematography] + [2. Subject] + [3. Action] + [4. Context] + [5. Style & Ambiance]
+               *** CRITICAL: DYNAMIC DIRECTOR MODE ***
+               You have full authority to decide:
+               - How many scenes (1 to N) based on narrative complexity
+               - Duration of each scene (1-8 seconds, YOU decide what serves the story best)
+               - Internal cuts within each scene using timestamp format
+               - Pacing: rapid cuts for action, long takes for drama
+
+               VEO 3.1 CAPABILITIES:
+               - Max 8 seconds per generation (scene)
+               - Timestamp prompting: [MM:SS-MM:SS] format for internal cuts
+               - Native audio generation (dialogue, SFX, music)
 
                GUIDELINES:
-               1. **Cinematography:** Specify Shot Type (Wide, Medium, Close-up), Camera Angle (Eye-level, Low-angle, High-angle, Bird's-eye, Dutch angle), and Movement (Pan, Tilt, Dolly, Truck, Crane, Handheld, Arc, Static). Use "Lens Effects" if needed (Shallow depth of field, Rack focus, Fisheye).
-               2. **Subject Consistency:** Use the EXACT SAME detailed physical description for the main character in EVERY shot to prevent identity drift.
-               3. **Audio:** Veo 3.1 generates audio. Include specific audio cues (Dialogue, SFX, Ambient) in the prompt.
-                  - Dialogue Format: "Character says: Dialogue" (Use COLON, not quotes, to prevent subtitles).
-                  - SFX Format: "SFX: thunder cracks."
-               4. **Lighting & Style:** Define the lighting (e.g., "Cinematic lighting, volumetric fog, teal and orange palette").
-               5. **Structure:** The environment must remain consistent (same location) but viewed from different angles.
-               6. **Duration:** Each shot is exactly 5 seconds. Focus on ONE main action per shot.
-               7. **Negative Prompts:** Implicitly avoid text/watermarks. Append "(no subtitles)" to end of prompt.
+               1. **Scene Planning:** Break complex narratives into multiple scenes. Each scene = one API call.
+                  - Simple/commercial: 1-2 scenes
+                  - Narrative/dialogue: 2-4 scenes
+                  - Complex/action: 4+ scenes as needed
+               
+               2. **Timestamp Format:** Use [00:00-00:XX] format for internal segments:
+                  Example: "[00:00-00:02] Wide establishing shot. [00:02-00:05] Medium shot reaction. [00:05-00:08] Close up emotional climax."
+               
+               3. **Pacing Control:** YOU decide the rhythm:
+                  - Fast-paced action: Short scenes (3-4s) with quick cuts
+                  - Emotional drama: Longer scenes (6-8s) with slow transitions
+                  - Dialogue scenes: Match cuts to conversation beats
+               
+               4. **Cinematography:** Specify Shot Type, Camera Angle, Movement, Lens Effects in each segment.
+               
+               5. **Subject Consistency:** Use EXACT SAME character description across all segments.
+               
+               6. **Audio Direction:** Include Dialogue, SFX, Ambient cues in prompts.
+                  - Dialogue: "Character says: Dialogue text" (use COLON, not quotes)
+                  - SFX: "SFX: description"
+               
+               7. **Duration Flexibility:** Each scene is 1-8 seconds. Choose what serves the narrative:
+                  - Punchy commercial: 3-4 seconds
+                  - Cinematic moment: 6-8 seconds
+               
+               8. **Segment Continuity:** Ensure timestamps flow continuously [00:00-00:03] -> [00:03-00:06] -> [00:06-00:08]
                `,
     config: {
       responseMimeType: 'application/json',
       responseSchema: schema,
-      systemInstruction: `You are a Meta-Prompting Engine for Google Veo 3.1.
+      systemInstruction: `You are a Meta-Prompting Engine for Google Veo 3.1 - DYNAMIC DIRECTOR MODE.
       
-      Your goal is to output a JSON production plan where EACH 'prompt' field is a standalone, professional-grade video prompt following this formula:
-      "[Camera Movement], [Shot Type]. [Subject Description]. [Action]. [Environment/Context]. [Lighting/Style]. [Audio Cues]. (no subtitles)"
+      Your goal is to analyze user requirements and output a JSON production plan with FLEXIBLE scene structure.
+      
+      SCHEMA STRUCTURE:
+      {
+        "subject_prompt": "Character bible entry",
+        "environment_prompt": "Location bible entry", 
+        "visual_style": "Cinematic style description",
+        "scenes": [
+          {
+            "id": "scene-1",
+            "order": 1,
+            "duration_seconds": 6,
+            "segments": [
+              {"start_time": "00:00", "end_time": "00:03", "prompt": "Wide shot establishing", "camera_movement": "Static wide"},
+              {"start_time": "00:03", "end_time": "00:06", "prompt": "Hero reaction close up", "camera_movement": "Push in"}
+            ],
+            "master_prompt": "[00:00-00:03] Static wide shot, cyberpunk city street at night, neon signs reflecting on wet pavement. [00:03-00:06] Push in close up on hero's face, neon reflection in eyes, determined expression. SFX: Distant thunder, rain ambience."
+          }
+        ],
+        "reasoning": "Why this structure serves the narrative"
+      }
 
-      EXAMPLE PROMPT OUTPUT:
-      "Low angle, slow dolly in. A weathered cyber-samurai with neon blue dreadlocks stands stoically. He slowly unsheathes a glowing katana. A grimy neon-lit alleyway in Neo-Tokyo. High contrast cyberpunk aesthetic. SFX: Rain hitting pavement. The samurai says: Honor is earned. (no subtitles)"
+      DYNAMIC DECISION FRAMEWORK:
+      1. Analyze narrative complexity
+         - Simple product shot → 1 scene, 3-4 seconds
+         - Character introduction → 1 scene, 5-6 seconds  
+         - Dialogue exchange → 2 scenes (reverse angles)
+         - Action sequence → 3-4 scenes, varied pacing
+         - Complex story → 4+ scenes as needed
 
-      CRITICAL:
-      - The 'subject_prompt' field must be a reusable Character Bible entry.
-      - The 'environment_prompt' field must be a reusable Location Bible entry.
-      - In the 'shots' array, every 'prompt' MUST include the full subject description again.
-      - **Dialogue Rule:** Use "Subject says: Words". DO NOT use quotation marks for dialogue.
-      - **Action Rule:** Use a SINGLE, CONCRETE verb for the main action (e.g., "jumps", "runs"). Avoid sequential tasks.
+      2. Determine scene duration (1-8 seconds)
+         - Commercial/urgent: 3-4 seconds
+         - Cinematic/atmospheric: 6-8 seconds
+         - Match duration to emotional beat
+
+      3. Plan internal cuts using timestamps
+         - Ensure continuous flow: [00:00-00:02] → [00:02-00:05] → [00:05-00:08]
+         - Vary shot sizes: Wide → Medium → Close up
+         - Match camera movement to action
+
+      MASTER_PROMPT FORMAT:
+      Combine all segments into a single string with timestamps:
+      "[MM:SS-MM:SS] Cinematography. Subject. Action. Context. Style. Audio. (no subtitles)"
+
+      CRITICAL RULES:
+      - 'subject_prompt' and 'environment_prompt' must be reusable bible entries
+      - Each segment's prompt MUST include full subject description
+      - Timestamps must be continuous (no gaps)
+      - Total duration per scene: 1-8 seconds (YOU decide)
+      - Dialogue format: "Character says: Words" (use COLON, no quotes)
+      - Include audio cues in every segment description
+      - Append "(no subtitles)" to end of master_prompt
       `
     }
   });
@@ -605,21 +682,118 @@ export const runShotDraftingAgent = async (
 };
 
 /**
+ * SCENE GENERATION AGENT
+ * Generates a complete scene using timestamp prompting (1 API call, multiple internal cuts)
+ */
+export const runSceneGenerationAgent = async (
+  scene: SceneParams,
+  plan: DirectorPlan,
+  assets: AssetItem[],
+  feedback?: string
+): Promise<VideoArtifact> => {
+  console.log(`[Engineer] Generating Scene ${scene.order} (${scene.duration_seconds}s)...${feedback ? ' (with feedback)' : ''}`);
+
+  const references: VideoGenerationReferenceImage[] = [];
+
+  for (const asset of assets) {
+    if (!asset.base64) {
+      asset.base64 = await blobToBase64(asset.blob);
+    }
+    references.push({
+      image: {
+        imageBytes: asset.base64,
+        mimeType: 'image/png'
+      },
+      referenceType: asset.type === 'character'
+        ? VideoGenerationReferenceType.ASSET
+        : VideoGenerationReferenceType.STYLE
+    });
+  }
+
+  let finalPrompt = scene.master_prompt;
+  
+  if (feedback) {
+    finalPrompt = `CRITICAL DIRECTOR NOTE: ${feedback}. ${finalPrompt}`;
+  }
+  
+  console.log(`[Engineer] Scene ${scene.order} Master Prompt: ${finalPrompt.substring(0, 100)}...`);
+
+  // Retry loop for transient errors
+  let lastError;
+  const maxAttempts = 5;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      if (attempt > 1) {
+        const delay = getRetryDelay(attempt);
+        console.log(`[Engineer] Retry ${attempt}/${maxAttempts}: waiting ${Math.ceil(delay/1000)}s (with jitter)...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+
+      await waitForQuota('VIDEO_GEN');
+      
+      let operation = await ai.models.generateVideos({
+        model: 'veo-3.1-fast-generate-preview',
+        prompt: finalPrompt,
+        config: {
+          numberOfVideos: 1,
+          resolution: '720p',
+          aspectRatio: '16:9',
+          referenceImages: references
+        }
+      });
+
+      // Poll for completion
+      while (!operation.done) {
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        operation = await ai.operations.getVideosOperation({ operation });
+      }
+
+      if (operation.error) {
+        console.error(`[Engineer] Operation failed for scene ${scene.order}:`, operation.error);
+        throw new Error(`API Error: ${operation.error.message || 'Unknown API error'}`);
+      }
+
+      const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
+      if (!videoUri) {
+        console.error(`[Engineer] No video URI for scene ${scene.order}.`);
+        throw new Error(`Generation completed but returned no video.`);
+      }
+
+      const res = await fetch(`${videoUri}&key=${process.env.API_KEY}`);
+      if (!res.ok) throw new Error(`Failed to fetch video blob: ${res.statusText}`);
+      const blob = await res.blob();
+
+      return {
+        url: URL.createObjectURL(blob),
+        blob,
+        uri: videoUri,
+        shotId: scene.id // Using shotId field for backward compatibility
+      };
+
+    } catch (e: any) {
+      console.warn(`[Engineer] Attempt ${attempt} failed for scene ${scene.order}:`, e);
+      lastError = e;
+    }
+  }
+
+  throw new Error(`Failed to generate scene ${scene.order} after ${maxAttempts} attempts.`);
+};
+
+/**
  * PRODUCTION PIPELINE (Sequential)
- * Manages the sequential generation of the Dailies sequence.
+ * Manages the sequential generation of scenes.
  */
 export const runProductionPipeline = async (plan: DirectorPlan, assets: AssetItem[]): Promise<VideoArtifact[]> => {
-  console.log('[Production] Initializing serial generation with QuotaGuard active...');
+  console.log(`[Production] Initializing serial generation with ${plan.scenes.length} scenes...`);
 
   const results: VideoArtifact[] = [];
 
-  for (const shot of plan.shots) {
-    // Run sequentially
+  for (const scene of plan.scenes) {
     try {
-      const result = await runShotDraftingAgent(shot, plan, assets);
+      const result = await runSceneGenerationAgent(scene, plan, assets);
       results.push(result);
     } catch (e) {
-      console.error(`[Production] Shot ${shot.order} failed even after retries:`, e);
+      console.error(`[Production] Scene ${scene.order} failed:`, e);
       throw e;
     }
   }

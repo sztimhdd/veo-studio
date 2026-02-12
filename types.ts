@@ -72,6 +72,25 @@ export type PipelinePhase =
   | 'COMPLETE'
   | 'ERROR';
 
+// --- DYNAMIC DIRECTOR TYPES (New) ---
+
+export interface SceneSegment {
+  start_time: string; // "00:00"
+  end_time: string;   // "00:04"
+  prompt: string;
+  camera_movement: string;
+  audio_cues?: string;
+}
+
+export interface SceneParams {
+  id: string;
+  order: number;
+  duration_seconds: number; // 1-8 seconds max
+  segments: SceneSegment[];
+  master_prompt: string; // Combined timestamped prompt for Veo
+}
+
+// Legacy: Keep for backward compatibility during migration
 export interface ShotParams {
   id: string;
   order: number;
@@ -84,8 +103,9 @@ export interface DirectorPlan {
   subject_prompt: string;
   environment_prompt: string;
   visual_style: string;
-  shots: ShotParams[];
   reasoning: string;
+  scenes: SceneParams[]; // New: Variable scene structure
+  shots?: ShotParams[];  // Legacy: Optional for backward compatibility
 }
 
 export interface AssetItem {

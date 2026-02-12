@@ -1,118 +1,80 @@
-/**
- * Lightweight Video Stitching Service
- * Uses HTML5 Canvas + MediaRecorder to perform client-side video composition.
- * No external heavy dependencies like FFmpeg requiring SharedArrayBuffer.
- */
-
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { VideoArtifact } from '../types';
 
-interface StitchingOptions {
-    width?: number;
-    height?: number;
-    fps?: number;
-    transitionDuration?: number; // Duration of cross-dissolve in ms
-}
-
+/**
+ * Professional Video Stitching Service
+ * Uses FFmpeg.wasm for lossless stream concatenation.
+ */
 export class VideoStitcher {
-    private canvas: HTMLCanvasElement;
-    private ctx: CanvasRenderingContext2D;
-    private mediaRecorder: MediaRecorder | null = null;
-    private chunks: Blob[] = [];
-    private options: Required<StitchingOptions>;
+    private ffmpeg: FFmpeg;
+    private loaded = false;
 
-    constructor(options: StitchingOptions = {}) {
-        this.options = {
-            width: options.width || 1280,
-            height: options.height || 720,
-            fps: options.fps || 30,
-            transitionDuration: options.transitionDuration || 1000,
-        };
+    constructor() {
+        this.ffmpeg = new FFmpeg();
+    }
 
-        this.canvas = document.createElement('canvas');
-        this.canvas.width = this.options.width;
-        this.canvas.height = this.options.height;
-        const ctx = this.canvas.getContext('2d');
-        if (!ctx) throw new Error('Could not get 2D context');
-        this.ctx = ctx;
+    private async load() {
+        if (this.loaded) return;
+
+        const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
+        await this.ffmpeg.load({
+            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+        });
+        
+        this.loaded = true;
     }
 
     async stitch(videos: VideoArtifact[]): Promise<Blob> {
         if (videos.length === 0) throw new Error('No videos to stitch');
+        if (videos.length === 1) return videos[0].blob;
 
-        const stream = this.canvas.captureStream(this.options.fps);
-        // Detect supported MIME type
-        const mimeType = MediaRecorder.isTypeSupported('video/mp4')
-            ? 'video/mp4'
-            : 'video/webm;codecs=vp9';
+        await this.load();
 
-        // Use slightly higher bitrate for better quality
-        this.mediaRecorder = new MediaRecorder(stream, {
-            mimeType,
-            videoBitsPerSecond: 5000000 // 5 Mbps
-        });
-
-        this.chunks = [];
-        this.mediaRecorder.ondataavailable = (e) => {
-            if (e.data.size > 0) this.chunks.push(e.data);
-        };
-        this.mediaRecorder.start();
-
-        // Play sequences with transition overlap
+        const inputNames: string[] = [];
+        
+        // 1. Write files to FFmpeg FS
         for (let i = 0; i < videos.length; i++) {
-            const isLast = i === videos.length - 1;
-            await this.playVideoSegment(videos[i], videos[i + 1], isLast);
+            const name = `input${i}.mp4`;
+            await this.ffmpeg.writeFile(name, await fetchFile(videos[i].blob));
+            inputNames.push(name);
         }
 
-        this.mediaRecorder.stop();
+        // 2. Create file list for concat demuxer
+        const fileListContent = inputNames.map(name => `file '${name}'`).join('\n');
+        await this.ffmpeg.writeFile('filelist.txt', fileListContent);
 
-        return new Promise((resolve) => {
-            this.mediaRecorder!.onstop = () => {
-                const finalBlob = new Blob(this.chunks, { type: mimeType });
-                resolve(finalBlob);
-            };
-        });
-    }
+        // 3. Execute concatenation
+        // We use '-c copy' to avoid re-encoding since Veo outputs are consistent
+        // If they vary in resolution/codec, we might need a filter complex instead.
+        await this.ffmpeg.exec([
+            '-f', 'concat',
+            '-safe', '0',
+            '-i', 'filelist.txt',
+            '-c', 'copy',
+            'output.mp4'
+        ]);
 
-    private async playVideoSegment(current: VideoArtifact, next: VideoArtifact | undefined, isLast: boolean): Promise<void> {
-        const videoEl = document.createElement('video');
-        videoEl.src = current.url;
-        videoEl.muted = true;
-        videoEl.playsInline = true;
+        // 4. Read result
+        const data = await this.ffmpeg.readFile('output.mp4');
+        
+        // Cleanup
+        for (const name of inputNames) {
+            await this.ffmpeg.deleteFile(name);
+        }
+        await this.ffmpeg.deleteFile('filelist.txt');
+        await this.ffmpeg.deleteFile('output.mp4');
 
-        // Determine overlapping/transition logic
-        // For simplicity in V1: Just hard cut or simple generic play.
-        // To do true cross-dissolve, we'd need TWO video elements playing simultaneously.
-        // Let's implement sequential play first to prove the pipeline, then add transition.
-
-        await videoEl.play();
-
-        return new Promise((resolve) => {
-            const draw = () => {
-                if (videoEl.paused || videoEl.ended) return;
-
-                this.ctx.drawImage(videoEl, 0, 0, this.canvas.width, this.canvas.height);
-
-                if (!videoEl.ended) {
-                    requestAnimationFrame(draw);
-                }
-            };
-
-            videoEl.onended = () => {
-                resolve();
-            };
-
-            draw();
-        });
+        return new Blob([(data as Uint8Array).buffer], { type: 'video/mp4' });
     }
 }
 
 export const stitchVideos = async (artifacts: VideoArtifact[]): Promise<{ url: string, extension: string }> => {
     const stitcher = new VideoStitcher();
     const blob = await stitcher.stitch(artifacts);
-    // Determine extension based on the actual blob type
-    const extension = blob.type.includes('mp4') ? 'mp4' : 'webm';
     return {
         url: URL.createObjectURL(blob),
-        extension
+        extension: 'mp4'
     };
 };

@@ -87,21 +87,19 @@ const StudioContent: React.FC<{
     }
   };
 
-  const handleRegenerateShot = async (index: number, feedback: string) => {
+  const handleRegenerateScene = async (index: number, feedback: string) => {
     if (!state.artifacts.plan || !state.artifacts.assets) return;
     
-    const shotParams = state.artifacts.plan.shots[index];
-    const currentShot = state.artifacts.shots[index];
-    const nextVersion = (currentShot?.version || 1) + 1;
+    const sceneParams = state.artifacts.plan.scenes[index];
+    const currentScene = state.artifacts.shots[index];
+    const nextVersion = (currentScene?.version || 1) + 1;
 
-    dispatch({ type: 'ADD_LOG', payload: { agent: 'Engineer', message: `Regenerating SC01_SH0${index + 1} (Take ${nextVersion})...`, phase: 'DRAFTING' } });
-    
-    // We don't set the whole phase to DRAFTING to avoid UI disruption, 
-    // but the specific shot card will show loading based on a local state we'll add to Visualizer.
+    dispatch({ type: 'ADD_LOG', payload: { agent: 'Engineer', message: `Regenerating Scene ${index + 1} (Take ${nextVersion})...`, phase: 'DRAFTING' } });
     
     try {
-      const newShot = await runShotDraftingAgent(
-        shotParams, 
+      const { runSceneGenerationAgent } = await import('./services/pipelineService');
+      const newScene = await runSceneGenerationAgent(
+        sceneParams, 
         state.artifacts.plan, 
         state.artifacts.assets, 
         feedback
@@ -111,11 +109,11 @@ const StudioContent: React.FC<{
         type: 'UPDATE_SHOT', 
         payload: { 
           index, 
-          shot: { ...newShot, userFeedback: feedback, version: nextVersion } 
+          shot: { ...newScene, userFeedback: feedback, version: nextVersion } 
         } 
       });
       
-      dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Shot ${index + 1} Take ${nextVersion} ready.`, phase: 'COMPLETE' } });
+      dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Scene ${index + 1} Take ${nextVersion} ready.`, phase: 'COMPLETE' } });
     } catch (e: any) {
       console.error(e);
       dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Regeneration failed: ${e.message}`, phase: 'ERROR' } });
@@ -262,7 +260,7 @@ const StudioContent: React.FC<{
             </div>
           </div>
           <PipelineVisualizer 
-            onRegenerate={handleRegenerateShot} 
+            onRegenerate={handleRegenerateScene} 
             onRefine={handleRefineShot} 
           />
         </div>
