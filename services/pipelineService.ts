@@ -11,18 +11,45 @@ import { AssetItem, DirectorPlan, ShotParams, Resolution, VideoArtifact } from '
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 // --- QUOTA MANAGEMENT ---
-// Implements Exponential Backoff with Jitter (Best Practice for Gemini API)
+// Implements Token Bucket / Leaky Bucket style rate limiting based on User's verified Quotas.
+
+const QUOTAS = {
+  VIDEO_GEN: {
+    // Veo 3 Fast: 3 RPM. We use 2 RPM (30s) for safety.
+    minInterval: 30000, 
+    lastCall: 0
+  },
+  IMAGE_GEN: {
+    // Nano Banana Pro: 4 RPM. We use 3 RPM (20s) for safety.
+    minInterval: 20000,
+    lastCall: 0
+  },
+  TEXT_GEN: {
+    // Gemini 3 Pro: 7 RPM. We use 5 RPM (12s) for safety.
+    minInterval: 12000,
+    lastCall: 0
+  }
+};
+
+async function waitForQuota(type: keyof typeof QUOTAS) {
+  const quota = QUOTAS[type];
+  const now = Date.now();
+  const timeSinceLast = now - quota.lastCall;
+  
+  if (timeSinceLast < quota.minInterval) {
+    const wait = quota.minInterval - timeSinceLast;
+    console.log(`[QuotaManager] Throttling ${type}: waiting ${Math.ceil(wait/1000)}s...`);
+    await new Promise(resolve => setTimeout(resolve, wait));
+  }
+  
+  quota.lastCall = Date.now();
+}
 
 // Calculate delay: 1000ms * 2^attempt +/- 20% jitter, capped at 60s
 function getRetryDelay(attempt: number): number {
   const baseDelay = 1000 * Math.pow(2, attempt);
   const jitter = baseDelay * 0.2 * (Math.random() * 2 - 1); // +/- 20% random jitter
   return Math.min(Math.max(baseDelay + jitter, 500), 60000); // Clamp between 0.5s and 60s
-}
-
-async function enforceQuotaSafety() {
-  // Small grace period to prevent thundering herd
-  await new Promise(resolve => setTimeout(resolve, 1000));
 }
 
 // --- UTILITIES ---
@@ -127,7 +154,8 @@ export const runDirectorAgent = async (userPrompt: string): Promise<DirectorPlan
     required: ["subject_prompt", "environment_prompt", "visual_style", "shots", "reasoning"]
   };
 
-  const response = await ai.models.generateContent({
+    await waitForQuota('TEXT_GEN'); // Director uses Gemini 3 Pro (Text)
+    const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
     contents: `You are an expert Film Director and Cinematographer.
                Your task is to break down this user narrative into a 3-shot "Dailies" sequence for Veo 3.1 video generation.
@@ -236,7 +264,7 @@ CRITICAL RULES:
     const userCharBase64 = await blobToBase64(userCharacter);
     console.log('[Artist] User provided character reference — extrapolating 3-view sheet...');
     
-    await enforceQuotaSafety();
+    await waitForQuota('IMAGE_GEN');
     charResponse = await ai.models.generateContent({
       model: ARTIST_MODEL,
       contents: [
@@ -251,7 +279,7 @@ CRITICAL RULES:
     // Text-to-image mode: generate from Director's description
     console.log('[Artist] No user reference — generating character from description...');
     
-    await enforceQuotaSafety();
+    await waitForQuota('IMAGE_GEN');
     charResponse = await ai.models.generateContent({
       model: ARTIST_MODEL,
       contents: charTurnaroundPrompt,
@@ -300,7 +328,7 @@ CRITICAL RULES:
     const userEnvBase64 = await blobToBase64(userEnvironment);
     console.log('[Artist] User provided environment reference — extrapolating reference sheet...');
     
-    await enforceQuotaSafety();
+    await waitForQuota('IMAGE_GEN');
     envResponse = await ai.models.generateContent({
       model: ARTIST_MODEL,
       contents: [
@@ -314,7 +342,7 @@ CRITICAL RULES:
   } else {
     console.log('[Artist] No user reference — generating environment from description...');
     
-    await enforceQuotaSafety();
+    await waitForQuota('IMAGE_GEN');
     envResponse = await ai.models.generateContent({
       model: ARTIST_MODEL,
       contents: envTurnaroundPrompt,
@@ -409,7 +437,7 @@ export const runShotDraftingAgent = async (
         await new Promise(resolve => setTimeout(resolve, delay));
       }
 
-      await enforceQuotaSafety();
+      await waitForQuota('VIDEO_GEN');
       
       let operation = await ai.models.generateVideos({
         model: 'veo-2.0-generate-preview', // TEMPORARY DOWNGRADE FOR DEV (Veo 3.1 Quota Exhausted)
