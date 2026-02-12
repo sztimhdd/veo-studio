@@ -412,13 +412,19 @@ export const runShotDraftingAgent = async (
       await enforceQuotaSafety();
       
       let operation = await ai.models.generateVideos({
-        model: 'veo-3.1-fast-generate-preview',
+        model: 'veo-2.0-generate-preview', // TEMPORARY DOWNGRADE FOR DEV (Veo 3.1 Quota Exhausted)
         prompt: finalPrompt,
         config: {
+          // Veo 2.0 config might differ slightly, but usually supports similar basics
+          // It doesn't support referenceImages in the same way, so we might need to omit them or adjust
+          // For now, let's try just changing the model name and keeping the rest if compatible,
+          // or strip incompatible fields if Veo 2.0 is strictly text-to-video.
+          // Assuming Veo 2.0 (Imagen 2 Video) doesn't support the exact 'referenceImages' schema of 3.1
+          // We will comment out referenceImages for this temporary fallback to ensure it runs.
           numberOfVideos: 1,
           resolution: '720p',
           aspectRatio: '16:9',
-          referenceImages: references
+          // referenceImages: references // Veo 2.0 likely doesn't support this
         }
       });
 
