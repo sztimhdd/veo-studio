@@ -261,6 +261,65 @@ export const extractFrameFromBlob = async (videoBlob: Blob, timeOffset: number =
   });
 };
 
+/**
+ * Strips EXIF/Metadata from an image by redrawing it to a Canvas.
+ */
+export const stripImageMetadata = async (blob: Blob): Promise<Blob> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(blob);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('Could not get canvas context'));
+        return;
+      }
+      ctx.drawImage(img, 0, 0);
+      canvas.toBlob((newBlob) => {
+        if (newBlob) resolve(newBlob);
+        else reject(new Error('Canvas toBlob failed'));
+      }, 'image/jpeg', 0.9);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Failed to load image for metadata stripping'));
+    };
+    img.src = url;
+  });
+};
+
+/**
+ * Sanitizes a prompt by replacing restricted brand/IP terms with generic alternatives.
+ */
+export const sanitizePrompt = (prompt: string): string => {
+  const replacements: Record<string, string> = {
+    'Nike': 'Athletic',
+    'Lego': 'Plastic bricks',
+    'Cyberpunk': 'Neon-lit futuristic',
+    'Superhero': 'Heroic figure',
+    'Disney': 'Animated cinematic',
+    'Pixar': '3D animated',
+    'Marvel': 'Heroic comic book',
+    'Star Wars': 'Space opera',
+    'Harry Potter': 'Wizarding fantasy',
+    'Coca-Cola': 'Soda',
+    'Apple': 'Tech brand',
+    'iPhone': 'Smartphone'
+  };
+
+  let sanitized = prompt;
+  for (const [restricted, replacement] of Object.entries(replacements)) {
+    const regex = new RegExp(`\\b${restricted}\\b`, 'gi');
+    sanitized = sanitized.replace(regex, replacement);
+  }
+  
+  return sanitized;
+};
+
 // --- AGENTS ---
 
 /**
@@ -407,9 +466,12 @@ export const runDirectorAgent = async (
                   - Punchy commercial: 3-4 seconds
                   - Cinematic moment: 6-8 seconds
                
-               8. **Segment Continuity:** Ensure timestamps flow continuously [00:00-00:03] -> [00:03-00:06] -> [00:06-00:08]
+                8. **Segment Continuity:** Ensure timestamps flow continuously [00:00-00:03] -> [00:03-00:06] -> [00:06-00:08]
+               
+               9. **Safety & IP:** DO NOT use brand names (Nike, Apple), specific IP (Disney, Marvel, Star Wars), or artist names. Use generic descriptive terms instead.
                `,
     config: {
+
       responseMimeType: 'application/json',
       responseSchema: schema,
       systemInstruction: `You are a Meta-Prompting Engine for Google Veo 3.1 - DYNAMIC DIRECTOR MODE.
@@ -484,10 +546,13 @@ export const runDirectorAgent = async (
            - Quick cuts/Action: 'fade' duration 0.3-0.5
            - Emotional/Drama: 'fadeblack' duration 0.8-1.5
            - Standard continuity: 'fade' duration 0.5 (default)
-         * Available types: 'fade', 'fadeblack', 'dissolve', 'pixelize', 'wipeh', 'wiped'
+          * Available types: 'fade', 'fadeblack', 'dissolve', 'pixelize', 'wipeh', 'wiped'
+       
+       10. **IP Neutrality:** Ensure 'visual_style' and all prompts are free of brand names or specific studio styles (e.g., no "Disney-style", "Pixar-style", or "Lego-style"). Use descriptive lighting and texture terms instead.
       `
     }
   });
+
 
   const text = response.text;
   if (!text) throw new Error("Director returned empty plan");
@@ -761,30 +826,60 @@ export const runShotDraftingAgent = async (
         await new Promise(resolve => setTimeout(resolve, delay));
       }
 
-      // STRATEGY: Fallback to single reference on persistent failures
+      // STRATEGY: Progressive safety fallbacks
       let currentReferences = finalReferences;
-      if (attempt >= 4) {
-        console.warn(`[Engineer] Retry ${attempt}: ⚠️ Dropping to 1 reference to recover.`);
-        currentReferences = references.slice(0, 1);
+      let currentPrompt = finalPrompt;
+      const isSafetyError = lastError?.message?.includes('Safety Filter') || lastError?.message?.includes('guardrails') || lastError?.message?.includes('RAI');
+      
+      if (attempt === 2 && isSafetyError) {
+        console.warn(`[Engineer] Retry ${attempt}: ⚠️ Safety Filter triggered. Stripping metadata from references.`);
+        currentReferences = await Promise.all(finalReferences.map(async (ref) => ({
+          ...ref,
+          image: {
+            ...ref.image,
+            imageBytes: await blobToBase64(await stripImageMetadata(base64ToBlob(ref.image.imageBytes as string)))
+          }
+        })));
+      } else if (attempt === 3 && isSafetyError) {
+        console.warn(`[Engineer] Retry ${attempt}: ⚠️ Persistent Safety Filter. Sanitizing prompt.`);
+        currentPrompt = sanitizePrompt(finalPrompt);
+      } else if (attempt === 4 && isSafetyError) {
+        console.warn(`[Engineer] Retry ${attempt}: ⚠️ Dropping user references, keeping AI assets.`);
+        currentReferences = references.filter(r => {
+          // Find the asset in the original assets list to check source
+          const asset = assets.find(a => a.base64 === (r.image.imageBytes as string));
+          return asset?.source === 'ai';
+        });
+      } else if (attempt >= 5) {
+        console.warn(`[Engineer] Retry ${attempt}: ⚠️ Dropping ALL references to recover.`);
+        currentReferences = [];
       }
 
       await waitForQuota('VIDEO_GEN');
       
       let operation = await aiService.client.models.generateVideos({
         model: 'veo-3.1-fast-generate-preview',
-        prompt: finalPrompt,
+        prompt: currentPrompt,
         config: {
           numberOfVideos: 1,
           resolution: '720p',
           aspectRatio: '16:9',
-          referenceImages: currentReferences
-        }
+          referenceImages: currentReferences,
+          includeRaiReason: true
+        } as any
       });
 
       // Poll for completion
       while (!operation.done) {
         await new Promise(resolve => setTimeout(resolve, 5000));
         operation = await aiService.client.operations.getVideosOperation({ operation });
+      }
+
+      // Check for RAI/Safety filtering in response
+      if (operation.response?.raiMediaFilteredReasons?.length > 0) {
+          const reason = operation.response.raiMediaFilteredReasons.join(', ');
+          console.warn(`[Engineer] Shot ${shot.order}: Content filtered: ${reason}`);
+          throw new Error(`Safety Filter: ${reason}`);
       }
 
       // Check for API-level errors in the operation object
@@ -874,38 +969,46 @@ export const runSceneGenerationAgent = async (
         await new Promise(resolve => setTimeout(resolve, delay));
       }
 
-      // STRATEGY: 
-      // Attempt 1: All references (Standard)
-      // Attempt 2: If previous was Safety/Third-Party, use ONLY 'character' type (generated assets)
-      // Attempt 3: If previous was Safety/Third-Party, use NO references (Text-to-Video)
-      // Attempt 4+: Fallback to single character reference (recovery mode)
-      
+      // STRATEGY: Progressive safety fallbacks
       let currentReferences = finalReferences;
-      const isSafetyError = lastError?.message?.includes('Safety Filter') || lastError?.message?.includes('guardrails');
+      let currentPrompt = finalPrompt;
+      const isSafetyError = lastError?.message?.includes('Safety Filter') || lastError?.message?.includes('guardrails') || lastError?.message?.includes('RAI');
       
       if (attempt === 2 && isSafetyError) {
-        console.warn(`[Engineer] Retry ${attempt}: ⚠️ Safety Filter triggered. Dropping user/style references, keeping only generated Character.`);
-        // Filter to keep only ASSET type (which usually corresponds to the generated character sheet)
-        currentReferences = references.filter(r => r.referenceType === VideoGenerationReferenceType.ASSET);
+        console.warn(`[Engineer] Retry ${attempt}: ⚠️ Safety Filter triggered. Stripping metadata from references.`);
+        currentReferences = await Promise.all(finalReferences.map(async (ref) => ({
+          ...ref,
+          image: {
+            ...ref.image,
+            imageBytes: await blobToBase64(await stripImageMetadata(base64ToBlob(ref.image.imageBytes as string)))
+          }
+        })));
       } else if (attempt === 3 && isSafetyError) {
-        console.warn(`[Engineer] Retry ${attempt}: ⚠️ Persistent Safety Filter. Dropping ALL references (Text-to-Video only).`);
+        console.warn(`[Engineer] Retry ${attempt}: ⚠️ Persistent Safety Filter. Sanitizing prompt.`);
+        currentPrompt = sanitizePrompt(finalPrompt);
+      } else if (attempt === 4 && isSafetyError) {
+        console.warn(`[Engineer] Retry ${attempt}: ⚠️ Dropping user references, keeping AI assets.`);
+        currentReferences = references.filter(r => {
+          const asset = assets.find(a => a.base64 === (r.image.imageBytes as string));
+          return asset?.source === 'ai';
+        });
+      } else if (attempt >= 5) {
+        console.warn(`[Engineer] Retry ${attempt}: ⚠️ Dropping ALL references to recover.`);
         currentReferences = [];
-      } else if (attempt >= 4) {
-        console.warn(`[Engineer] Retry ${attempt}: ⚠️ Dropping to 1 reference to recover from persistent failures.`);
-        currentReferences = references.slice(0, 1);
       }
 
       await waitForQuota('VIDEO_GEN');
       
       let operation = await aiService.client.models.generateVideos({
         model: 'veo-3.1-fast-generate-preview',
-        prompt: finalPrompt,
+        prompt: currentPrompt,
         config: {
           numberOfVideos: 1,
           resolution: '720p',
           aspectRatio: '16:9',
-          referenceImages: currentReferences
-        }
+          referenceImages: currentReferences,
+          includeRaiReason: true
+        } as any
       });
 
       // Poll for completion
