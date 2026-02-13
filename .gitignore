@@ -40,6 +40,7 @@ playwright-report/
 # Local Resources
 test_set/
 gh_token.txt
-*_resolved_config.json
+resolved_config.json
+current_resolved_config.json
 skills/
 bin/
