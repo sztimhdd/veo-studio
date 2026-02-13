@@ -93,16 +93,31 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate, o
                         <div className="flex gap-2">
                             <button
                                 onClick={async () => {
-                                    if (!state.artifacts.shots) return;
+                                    console.log('[PipelineVisualizer] Export button clicked.');
+                                    if (!state.artifacts.shots || state.artifacts.shots.length === 0) {
+                                        console.warn('[PipelineVisualizer] No shots to export.');
+                                        return;
+                                    }
                                     const btn = document.getElementById('export-btn');
                                     if (btn) btn.innerText = 'Stitching...';
                                     try {
+                                        console.log('[PipelineVisualizer] Importing stitchService...');
                                         const { stitchVideos } = await import('../services/stitchService');
-                                        const { url, extension } = await stitchVideos(state.artifacts.shots);
-                                        const a = document.createElement('a');
-                                        a.href = url;
-                                        a.download = `veo_commercial_export.${extension}`;
-                                        a.click();
+                                        console.log('[PipelineVisualizer] Preparing transitions...');
+                                        // Take all transitions except the last one (which corresponds to the last scene having no next scene)
+                                        // We map ALL scenes to preserve index alignment, then slice off the last element.
+                                        const transitions = state.artifacts.plan?.scenes?.map(s => s.transition).slice(0, -1) || [];
+                                        
+                                        console.log(`[PipelineVisualizer] Calling stitchVideos with ${state.artifacts.shots.length} shots and ${transitions.length} transitions.`);
+                                        const { url, extension } = await stitchVideos(state.artifacts.shots, transitions);
+                                        console.log('[PipelineVisualizer] Stitching complete. Triggering download...');
+                                        
+                                        const link = document.createElement('a');
+                                        link.href = url;
+                                        link.download = `veo-studio-production.${extension}`;
+                                        document.body.appendChild(link);
+                                        link.click();
+                                        document.body.removeChild(link);
                                     } catch (e) {
                                         console.error(e);
                                         alert('Stitching failed');
