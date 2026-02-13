@@ -761,6 +761,13 @@ export const runShotDraftingAgent = async (
         await new Promise(resolve => setTimeout(resolve, delay));
       }
 
+      // STRATEGY: Fallback to single reference on persistent failures
+      let currentReferences = finalReferences;
+      if (attempt >= 4) {
+        console.warn(`[Engineer] Retry ${attempt}: ⚠️ Dropping to 1 reference to recover.`);
+        currentReferences = references.slice(0, 1);
+      }
+
       await waitForQuota('VIDEO_GEN');
       
       let operation = await aiService.client.models.generateVideos({
@@ -770,7 +777,7 @@ export const runShotDraftingAgent = async (
           numberOfVideos: 1,
           resolution: '720p',
           aspectRatio: '16:9',
-          referenceImages: finalReferences
+          referenceImages: currentReferences
         }
       });
 
@@ -867,6 +874,16 @@ export const runSceneGenerationAgent = async (
         await new Promise(resolve => setTimeout(resolve, delay));
       }
 
+      // STRATEGY: 
+      // Attempts 1-3: Use up to 3 references (Standard)
+      // Attempts 4-5: Fallback to 1 reference (Character only) to avoid safety/complexity refusals
+      let currentReferences = finalReferences;
+      
+      if (attempt >= 4) {
+        console.warn(`[Engineer] Retry ${attempt}: ⚠️ Dropping to 1 reference to recover from persistent failures.`);
+        currentReferences = references.slice(0, 1);
+      }
+
       await waitForQuota('VIDEO_GEN');
       
       let operation = await aiService.client.models.generateVideos({
@@ -876,7 +893,7 @@ export const runSceneGenerationAgent = async (
           numberOfVideos: 1,
           resolution: '720p',
           aspectRatio: '16:9',
-          referenceImages: finalReferences
+          referenceImages: currentReferences
         }
       });
 
@@ -893,8 +910,8 @@ export const runSceneGenerationAgent = async (
 
       const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
       if (!videoUri) {
-        console.error(`[Engineer] No video URI for scene ${scene.order}.`);
-        throw new Error(`Generation completed but returned no video.`);
+        console.error(`[Engineer] No video URI for scene ${scene.order}. Full Response:`, JSON.stringify(operation, null, 2));
+        throw new Error(`Generation completed but returned no video. Likely Safety Filter or Model Refusal.`);
       }
 
       const res = await fetch(`${videoUri}&key=${import.meta.env.VITE_GEMINI_API_KEY}`);

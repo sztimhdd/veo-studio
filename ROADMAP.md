@@ -114,7 +114,7 @@ Based on the architecture defined in `references/proposed_arch_feb11.mermaid`, h
 ---
 
 ### Feature 2: Dual-Frame Upscaling for Mastering
-**Status:** Design Ready, Implementation Pending
+**Status:** ✅ Complete (Feb 2026)
 
 **Problem Statement:**
 - Current implementation upscales only single best frame from Phase 4
@@ -127,41 +127,11 @@ Based on the architecture defined in `references/proposed_arch_feb11.mermaid`, h
 3. Both upscaled frames sent to Veo 3.1 in FRAMES_TO_VIDEO mode
 4. Resulting video has smoother temporal boundaries
 
-**Recommended Implementation Approach:**
-```
-Current (Single-Frame):
-  masterVideo() {
-    const bestFrame = selectBestFrame(keyframes); // Single selection
-    const upscaled = await upscaleFrame(bestFrame);
-    const result = await veo.generateVideos({
-      model: "veo-3.1-generate-001",
-      prompt: finalPrompt,
-      image: upscaled.base64  // Only one reference
-    });
-  }
-
-Proposed (Dual-Frame):
-  masterVideo() {
-    const [firstFrame, lastFrame] = selectBoundaryFrames(keyframes);
-    const [firstUpscaled, lastUpscaled] = await Promise.all([
-      upscaleFrame(firstFrame),
-      upscaleFrame(lastFrame)
-    ]);
-    const result = await veo.generateVideos({
-      model: "veo-3.1-generate-001",
-      prompt: finalPrompt,
-      image: firstUpscaled.base64,
-      referenceImage: lastUpscaled.base64,  // Veo supports dual reference
-      configVideoLength: "SHORT"  // 8s clip controlled by frame spacing
-    });
-  }
-```
-
-**Implementation Tasks:**
-- [ ] Update Phase 4 logic - Extract first and last keyframe instead of single best
-- [ ] Add dual-frame upscaling in `masterVideo()` - Parallel processing with Promise.all
-- [ ] Update Veo API call - Use both upscaled frames in FRAMES_TO_VIDEO mode
-- [ ] Add dual-frame tests in `services/pipelineService.test.ts`
+**Implementation Details:**
+- Logic updated in `runRefinementPhase` to extract and upscale both start (0.1s) and end (duration-0.2s) frames.
+- `runMasteringAgent` now accepts `startAnchor` and `endAnchor`.
+- Veo API call updated to use `image` (start) and `config.lastFrame` (end).
+- Verified with `bolivia-adventure.spec.ts`.
 
 **File Changes Required:**
 - `services/pipelineService.ts` - masterVideo() function
