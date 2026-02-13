@@ -3,43 +3,30 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
-import { Video } from '@google/genai';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import ApiKeyDialog from './components/ApiKeyDialog';
-import { CurvedArrowDownIcon, SparklesIcon, ArrowLeftIcon } from './components/icons';
-import LoadingIndicator from './components/LoadingIndicator';
-import PromptForm from './components/PromptForm';
-import VideoResult from './components/VideoResult';
+import { SparklesIcon, ArrowLeftIcon } from './components/icons';
 import PipelineVisualizer from './components/PipelineVisualizer';
 import { ProductionProvider, useProduction } from './context/ProductionContext';
 import { ImageUpload } from './components/ImageUpload';
-import { generateVideo } from './services/geminiService';
 import {
-  extractFrameFromBlob,
   runArtistAgent,
   runDirectorAgent,
   runProductionPipeline,
   runRefinementPhase,
-  runShotDraftingAgent
+  runSceneGenerationAgent
 } from './services/pipelineService';
 import {
-  AppState,
-  AspectRatio,
-  GenerateVideoParams,
-  GenerationMode,
   ImageFile,
-  Resolution,
-  VideoFile,
 } from './types';
 
 // Wrapper component to access context
 const StudioContent: React.FC<{
-  onExit: () => void;
   prompt: string;
   setPrompt: (p: string) => void;
   isStarted: boolean;
   setIsStarted: (b: boolean) => void;
-}> = ({ onExit, prompt, setPrompt, isStarted, setIsStarted }) => {
+}> = ({ prompt, setPrompt, isStarted, setIsStarted }) => {
   const { state, dispatch } = useProduction();
   const [userCharacter, setUserCharacter] = useState<ImageFile | null>(null);
   const [userEnvironment, setUserEnvironment] = useState<ImageFile | null>(null);
@@ -53,7 +40,11 @@ const StudioContent: React.FC<{
     try {
       // 1. DIRECTOR
       dispatch({ type: 'ADD_LOG', payload: { agent: 'Director', message: 'Breaking script into 3 distinct shots...', phase: 'PLANNING' } });
-      const plan = await runDirectorAgent(prompt);
+      const plan = await runDirectorAgent(
+        prompt,
+        userCharacter?.file as Blob,
+        userEnvironment?.file as Blob
+      );
       dispatch({ type: 'UPDATE_ARTIFACTS', payload: { plan } });
       dispatch({ type: 'ADD_LOG', payload: { agent: 'Director', message: 'Shot list approved. Handoff to Art Dept.', phase: 'PLANNING' } });
 
@@ -97,7 +88,6 @@ const StudioContent: React.FC<{
     dispatch({ type: 'ADD_LOG', payload: { agent: 'Engineer', message: `Regenerating Scene ${index + 1} (Take ${nextVersion})...`, phase: 'DRAFTING' } });
     
     try {
-      const { runSceneGenerationAgent } = await import('./services/pipelineService');
       const newScene = await runSceneGenerationAgent(
         sceneParams, 
         state.artifacts.plan, 
@@ -198,9 +188,6 @@ const StudioContent: React.FC<{
           />
 
           <div className="flex gap-4 items-center">
-            <button onClick={onExit} className="px-6 py-3 rounded-full text-gray-500 hover:text-white hover:bg-white/10 transition-all font-medium text-sm">
-              Exit Studio
-            </button>
             <button
               onClick={async () => {
                 const fileToImageFile = (file: File): Promise<ImageFile> => {
@@ -270,22 +257,13 @@ const StudioContent: React.FC<{
 }
 
 const App: React.FC = () => {
-  const [appState, setAppState] = useState<AppState>(AppState.IDLE);
-  const [isStudioMode, setIsStudioMode] = useState(false);
   const [studioPrompt, setStudioPrompt] = useState("");
   const [isPipelineStarted, setIsPipelineStarted] = useState(false);
-
-  // --- CLASSIC MODE STATE ---
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [lastConfig, setLastConfig] = useState<GenerateVideoParams | null>(null);
-  const [lastVideoObject, setLastVideoObject] = useState<Video | null>(null);
-  const [lastVideoBlob, setLastVideoBlob] = useState<Blob | null>(null);
   const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
-  const [initialFormValues, setInitialFormValues] = useState<GenerateVideoParams | null>(null);
 
   useEffect(() => {
     const checkApiKey = async () => {
+      // Check if running in AI Studio
       if (window.aistudio) {
         try {
           if (!(await window.aistudio.hasSelectedApiKey())) {
@@ -295,89 +273,24 @@ const App: React.FC = () => {
           console.warn('aistudio.hasSelectedApiKey check failed', error);
           setShowApiKeyDialog(true);
         }
+      } else {
+        // Local development: check if API key is set in environment
+        const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+        if (!apiKey) {
+          console.warn('No API key found in environment. Set VITE_GEMINI_API_KEY or GEMINI_API_KEY in .env file.');
+          setShowApiKeyDialog(true); // Show dialog for informational purposes
+        } else {
+          console.log('Using API key from environment for local development');
+        }
       }
     };
     checkApiKey();
   }, []);
 
-  const handleGenerate = useCallback(async (params: GenerateVideoParams) => {
-    if (window.aistudio) {
-      try {
-        if (!(await window.aistudio.hasSelectedApiKey())) {
-          setShowApiKeyDialog(true);
-          return;
-        }
-      } catch (error) {
-        setShowApiKeyDialog(true);
-        return;
-      }
-    }
-
-    setAppState(AppState.LOADING);
-    setErrorMessage(null);
-    setLastConfig(params);
-    setInitialFormValues(null);
-
-    try {
-      const { objectUrl, blob, video } = await generateVideo(params);
-      setVideoUrl(objectUrl);
-      setLastVideoBlob(blob);
-      setLastVideoObject(video);
-      setAppState(AppState.SUCCESS);
-    } catch (error: any) {
-      console.error('Video generation failed:', error);
-      const msg = error.message || 'Unknown error';
-      if (msg.includes('Requested entity was not found') || msg.includes('403')) {
-        setShowApiKeyDialog(true);
-      }
-      setErrorMessage(msg);
-      setAppState(AppState.ERROR);
-    }
-  }, []);
-
-  const handleRetry = useCallback(() => {
-    if (lastConfig) handleGenerate(lastConfig);
-  }, [lastConfig, handleGenerate]);
-
   const handleApiKeyDialogContinue = async () => {
     setShowApiKeyDialog(false);
     if (window.aistudio) await window.aistudio.openSelectKey();
   };
-
-  const handleNewVideo = useCallback(() => {
-    setAppState(AppState.IDLE);
-    setVideoUrl(null);
-    setErrorMessage(null);
-    setLastConfig(null);
-    setLastVideoObject(null);
-    setLastVideoBlob(null);
-    setInitialFormValues(null);
-  }, []);
-
-  const handleExtend = useCallback(async () => {
-    if (lastConfig && lastVideoBlob && lastVideoObject) {
-      const file = new File([lastVideoBlob], 'last_video.mp4', { type: lastVideoBlob.type });
-      const videoFile: VideoFile = { file, base64: '' };
-      setInitialFormValues({
-        ...lastConfig,
-        mode: GenerationMode.EXTEND_VIDEO,
-        prompt: '',
-        inputVideo: videoFile,
-        inputVideoObject: lastVideoObject,
-        resolution: Resolution.P720,
-        startFrame: null,
-        endFrame: null,
-        referenceImages: [],
-        styleImage: null,
-        isLooping: false
-      });
-      setAppState(AppState.IDLE);
-      setVideoUrl(null);
-      setErrorMessage(null);
-    }
-  }, [lastConfig, lastVideoBlob, lastVideoObject]);
-
-  const canExtend = lastConfig?.resolution === Resolution.P720;
 
   return (
     <ProductionProvider>
@@ -388,67 +301,20 @@ const App: React.FC = () => {
           <h1 className="text-2xl font-semibold tracking-wide bg-gradient-to-r from-indigo-400 via-purple-500 to-pink-500 bg-clip-text text-transparent">
             Veo Studio
           </h1>
-          <div className="flex bg-gray-800 rounded-full p-1 border border-gray-700">
-            <button
-              onClick={() => setIsStudioMode(false)}
-              className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all ${!isStudioMode ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>
-              Classic
-            </button>
-            <button
-              onClick={() => setIsStudioMode(true)}
-              className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all flex items-center gap-1 ${isStudioMode ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>
-              Dailies Engine <span className="bg-emerald-500 text-black text-[9px] px-1 rounded font-bold">BETA</span>
-            </button>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-indigo-400 bg-indigo-400/10 px-3 py-1 rounded-full border border-indigo-400/20">
+              Dailies Engine <span className="ml-1 bg-emerald-500 text-black text-[9px] px-1 rounded font-bold">BETA</span>
+            </span>
           </div>
         </header>
 
         <main className="flex-grow w-full h-full overflow-hidden relative">
-          {isStudioMode ? (
-            <StudioContent
-              onExit={() => setIsStudioMode(false)}
-              prompt={studioPrompt}
-              setPrompt={setStudioPrompt}
-              isStarted={isPipelineStarted}
-              setIsStarted={setIsPipelineStarted}
-            />
-          ) : (
-            <div className="w-full max-w-4xl mx-auto flex-grow flex flex-col p-4 h-full overflow-y-auto">
-              {appState === AppState.IDLE ? (
-                <>
-                  <div className="flex-grow flex items-center justify-center min-h-[300px]">
-                    <div className="relative text-center">
-                      <h2 className="text-3xl text-gray-600">Type in the prompt box to start</h2>
-                      <CurvedArrowDownIcon className="absolute top-full left-1/2 -translate-x-1/2 mt-4 w-24 h-24 text-gray-700 opacity-60" />
-                    </div>
-                  </div>
-                  <div className="pb-4">
-                    <PromptForm onGenerate={handleGenerate} initialValues={initialFormValues} />
-                  </div>
-                </>
-              ) : (
-                <div className="flex-grow flex items-center justify-center">
-                  {appState === AppState.LOADING && <LoadingIndicator />}
-                  {appState === AppState.SUCCESS && videoUrl && (
-                    <VideoResult
-                      videoUrl={videoUrl}
-                      onRetry={handleRetry}
-                      onNewVideo={handleNewVideo}
-                      onExtend={handleExtend}
-                      canExtend={canExtend}
-                      aspectRatio={lastConfig?.aspectRatio || AspectRatio.LANDSCAPE}
-                    />
-                  )}
-                  {appState === AppState.ERROR && errorMessage && (
-                    <div className="text-center bg-red-900/20 border border-red-500 p-8 rounded-lg">
-                      <h2 className="text-xl text-red-400 mb-2">Error</h2>
-                      <p className="text-red-300">{errorMessage}</p>
-                      <button onClick={() => { setAppState(AppState.IDLE); setErrorMessage(null); }} className="mt-4 px-4 py-2 bg-gray-700 rounded">Back</button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+          <StudioContent
+            prompt={studioPrompt}
+            setPrompt={setStudioPrompt}
+            isStarted={isPipelineStarted}
+            setIsStarted={setIsPipelineStarted}
+          />
         </main>
       </div>
     </ProductionProvider>

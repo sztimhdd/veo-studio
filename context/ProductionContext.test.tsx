@@ -11,7 +11,7 @@ describe('ProductionContext Reducer', () => {
       assets: [],
       shots: [],
       draftVideo: null,
-      anchorFrame: null,
+      anchorFrames: null,
       finalVideo: null
     },
     logs: [],
@@ -53,6 +53,7 @@ describe('ProductionContext Reducer', () => {
         subject_prompt: 'Hero',
         environment_prompt: 'City',
         visual_style: 'Cyberpunk',
+        scenes: [],
         shots: [],
         reasoning: 'Test reasoning'
       };
@@ -201,7 +202,7 @@ describe('ProductionContext Reducer', () => {
         ...initialState,
         artifacts: {
           ...initialState.artifacts,
-          plan: { subject_prompt: 'Test', environment_prompt: 'Test', visual_style: 'Test', shots: [], reasoning: 'Test' }
+          plan: { subject_prompt: 'Test', environment_prompt: 'Test', visual_style: 'Test', scenes: [], shots: [], reasoning: 'Test' }
         }
       };
 
@@ -220,11 +221,14 @@ describe('ProductionContext Reducer', () => {
       const modifiedState: ProductionState = {
         phase: 'COMPLETE',
         artifacts: {
-          plan: { subject_prompt: 'Test', environment_prompt: 'Test', visual_style: 'Test', shots: [], reasoning: 'Test' },
+          plan: { subject_prompt: 'Test', environment_prompt: 'Test', visual_style: 'Test', scenes: [], shots: [], reasoning: 'Test' },
           assets: [{ id: '1', type: 'character', url: 'url', blob: new Blob(), source: 'ai' }],
           shots: [{ url: 'video.mp4', blob: new Blob(), uri: 'uri' }],
           draftVideo: { url: 'draft.mp4', blob: new Blob(), uri: 'uri' },
-          anchorFrame: { original: 'anchor-orig.png', upscaled: 'anchor-upscaled.png', blob: new Blob() },
+          anchorFrames: { 
+            start: { original: 'start.png', upscaled: 'start-up.png', blob: new Blob() },
+            end: { original: 'end.png', upscaled: 'end-up.png', blob: new Blob() }
+          },
           finalVideo: { url: 'final.mp4', blob: new Blob(), uri: 'uri' }
         },
         logs: [{ agent: 'System', message: 'Test', timestamp: 123, phase: 'COMPLETE' }],

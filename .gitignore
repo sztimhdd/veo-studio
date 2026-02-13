@@ -24,3 +24,22 @@ github-deployer-key.json
 *.njsproj
 *.sln
 *.sw?
+
+# Environment
+.env
+.env.*
+
+# Testing
+test-results/
+playwright-report/
+
+# Agent/Tooling
+.opencode/
+.sisyphus/
+
+# Local Resources
+test_set/
+gh_token.txt
+*_resolved_config.json
+skills/
+bin/

@@ -93,4 +93,144 @@ describe('waitForQuota', () => {
     await vi.runAllTimersAsync();
     await expect(promise).resolves.not.toThrow();
   });
+
+  it('should enforce correct minInterval for VIDEO_GEN (30s)', async () => {
+    const startTime = 1000000;
+    dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(startTime);
+
+    const promise1 = waitForQuota('VIDEO_GEN');
+    await vi.runAllTimersAsync();
+    await promise1;
+
+    // Immediately call again - should wait for 30000ms
+    const promise2 = waitForQuota('VIDEO_GEN');
+    await vi.advanceTimersByTimeAsync(10000);
+    // Should still be waiting
+    await vi.advanceTimersByTimeAsync(10000);
+    await vi.advanceTimersByTimeAsync(10005); // Total 30005ms
+
+    await expect(promise2).resolves.not.toThrow();
+    vi.restoreAllMocks();
+  });
+
+  it('should enforce correct minInterval for IMAGE_GEN (20s)', async () => {
+    const startTime = 1000000;
+    dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(startTime);
+
+    const promise1 = waitForQuota('IMAGE_GEN');
+    await vi.runAllTimersAsync();
+    await promise1;
+
+    const promise2 = waitForQuota('IMAGE_GEN');
+    await vi.advanceTimersByTimeAsync(15000);
+    // Should still be waiting
+    await vi.advanceTimersByTimeAsync(5001); // Total 20001ms
+
+    await expect(promise2).resolves.not.toThrow();
+    vi.restoreAllMocks();
+  });
+
+  it('should enforce correct minInterval for TEXT_GEN (12s)', async () => {
+    const startTime = 1000000;
+    dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(startTime);
+
+    const promise1 = waitForQuota('TEXT_GEN');
+    await vi.runAllTimersAsync();
+    await promise1;
+
+    const promise2 = waitForQuota('TEXT_GEN');
+    await vi.advanceTimersByTimeAsync(10000);
+    // Should still be waiting
+    await vi.advanceTimersByTimeAsync(2001); // Total 12001ms
+
+    await expect(promise2).resolves.not.toThrow();
+    vi.restoreAllMocks();
+  });
+
+  it('should not wait if enough time has passed since last call', async () => {
+    const startTime = 1000000;
+    dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(startTime);
+
+    const promise1 = waitForQuota('VIDEO_GEN');
+    await vi.runAllTimersAsync();
+    await promise1;
+
+    // Advance time past the minInterval (30s)
+    dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(startTime + 35000);
+
+    const promise2 = waitForQuota('VIDEO_GEN');
+    // Should complete immediately without waiting
+    await promise2;
+
+    vi.restoreAllMocks();
+  });
+
+  it('should handle concurrent quota requests for same type', async () => {
+    const startTime = 1000000;
+    dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(startTime);
+
+    const promise1 = waitForQuota('VIDEO_GEN');
+    const promise2 = waitForQuota('VIDEO_GEN'); // Concurrent
+    const promise3 = waitForQuota('VIDEO_GEN'); // Concurrent
+
+    await vi.runAllTimersAsync();
+
+    // All should resolve
+    await expect(Promise.all([promise1, promise2, promise3])).resolves.not.toThrow();
+    vi.restoreAllMocks();
+  });
+
+  it('should log when throttling', async () => {
+    const startTime = 1000000;
+    dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(startTime);
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const promise1 = waitForQuota('VIDEO_GEN');
+    await vi.runAllTimersAsync();
+    await promise1;
+
+    const promise2 = waitForQuota('VIDEO_GEN');
+    await vi.advanceTimersByTimeAsync(10000);
+
+    // Should have logged throttling message
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[QuotaManager] Throttling VIDEO_GEN: waiting'),
+    );
+
+    vi.restoreAllMocks();
+  });
+
+  it('should update lastCall timestamp after each call', async () => {
+    const startTime = 1000000;
+    dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(startTime);
+
+    const promise1 = waitForQuota('VIDEO_GEN');
+    await vi.runAllTimersAsync();
+    await promise1;
+
+    // Immediately call again
+    dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(startTime + 1000);
+
+    const promise2 = waitForQuota('VIDEO_GEN');
+    await vi.advanceTimersByTimeAsync(29000); // Should trigger full wait
+    await promise2;
+
+    vi.restoreAllMocks();
+  });
+
+  it('should handle different quota types independently', async () => {
+    const startTime = 1000000;
+    dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(startTime);
+
+    // Start all three at once
+    const videoPromise = waitForQuota('VIDEO_GEN');
+    const imagePromise = waitForQuota('IMAGE_GEN');
+    const textPromise = waitForQuota('TEXT_GEN');
+
+    await vi.runAllTimersAsync();
+
+    // All should resolve
+    await expect(Promise.all([videoPromise, imagePromise, textPromise])).resolves.not.toThrow();
+    vi.restoreAllMocks();
+  });
 });

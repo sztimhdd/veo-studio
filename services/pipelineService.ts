@@ -1,14 +1,10 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
-*/
-import { GoogleGenAI, Type, Schema, VideoGenerationReferenceImage, VideoGenerationReferenceType } from '@google/genai';
-import { AssetItem, DirectorPlan, SceneParams, ShotParams, Resolution, VideoArtifact } from '../types';
-
-
-// Initialize AI (API key handled by env)
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+ */
+import { Type, Schema, VideoGenerationReferenceImage, VideoGenerationReferenceType } from '@google/genai';
+import { aiService } from './aiService';
+import { AssetItem, DirectorPlan, SceneParams, ShotParams, VideoArtifact } from '../types';
 
 // --- QUOTA MANAGEMENT ---
 // Implements Token Bucket / Leaky Bucket style rate limiting based on User's verified Quotas.
@@ -56,7 +52,30 @@ import imagehash from 'imagehash-web';
 
 // Destructure functions from the default export array
 // [ahash, dhash, phash, whash, cropResistantHash, ImageHash]
-const [ahash, dhash, phash, whash, cropResistantHash, ImageHash] = imagehash as any;
+// Safely handle imagehash-web imports which can be flaky in ESM/Vite
+const getHashes = () => {
+  const lib = imagehash as any;
+  if (Array.isArray(lib)) return lib;
+  if (lib?.default && Array.isArray(lib.default)) return lib.default;
+  
+  // Fallback to window globals if the module system failed us (common in some WSL/Vite setups)
+  if (typeof window !== 'undefined' && (window as any).ahash) {
+    return [
+      (window as any).ahash,
+      (window as any).dhash,
+      (window as any).phash,
+      (window as any).whash,
+      (window as any).cropResistantHash,
+      (window as any).ImageHash
+    ];
+  }
+  
+  // Last resort: mock-like empty functions to prevent top-level crash
+  const noop = () => ({ hammingDistance: () => 0 });
+  return [noop, noop, noop, noop, noop, { fromHexString: () => null }];
+};
+
+const [ahash, dhash, phash, whash, cropResistantHash, ImageHash] = getHashes();
 
 // --- UTILITIES ---
 
@@ -143,41 +162,52 @@ export const runRefinementPhase = async (
   plan: DirectorPlan,
   assets: AssetItem[]
 ): Promise<VideoArtifact> => {
-  console.log('[Refining] Starting analysis...');
+  console.log('[Refining] Starting analysis (Dual-Frame)...');
   
   // 1. Extract Keyframes
   const keyframes = await extractKeyframes(draftVideo.blob);
-  if (keyframes.length === 0) throw new Error("Failed to extract keyframes");
+  if (keyframes.length < 3) throw new Error("Failed to extract keyframes (need at least 3 for start/end selection)");
   
-  // 2. Consistency Check (Score against Character Bible)
-  const characterAsset = assets.find(a => a.type === 'character') || assets[0];
-  const scores = await Promise.all(keyframes.map(k => 
-    calculateConsistency(k, characterAsset)
-  ));
+  // 2. Select Start and End frames
+  // keyframes[0] is start (0.1s), keyframes[2] is end (duration-0.2s)
+  const startFrameBase64 = keyframes[0];
+  const endFrameBase64 = keyframes[2]; 
   
-  console.log('[Refining] Consistency Scores:', scores);
+  const startFrameBlob = base64ToBlob(startFrameBase64, 'image/jpeg');
+  const endFrameBlob = base64ToBlob(endFrameBase64, 'image/jpeg');
   
-  // 3. Select Best Frame
-  const bestIndex = scores.indexOf(Math.max(...scores));
-  const bestKeyframeBase64 = keyframes[bestIndex];
-  const bestScore = scores[bestIndex];
+  // Determine prompt for this shot
+  const scene = plan.scenes?.find(s => s.id === draftVideo.shotId);
+  const shot = plan.shots?.find(s => s.id === draftVideo.shotId);
+  const prompt = scene?.master_prompt || shot?.prompt || plan.shots?.[0]?.prompt || "Action occurring in the scene";
+
+  // 3. Upscale BOTH (Gemini Vision) in Parallel
+  console.log('[Refining] Upscaling start and end frames...');
+  const [startUpscaledBlob, endUpscaledBlob] = await Promise.all([
+    runRefinerAgent(startFrameBlob, plan, prompt),
+    runRefinerAgent(endFrameBlob, plan, prompt)
+  ]);
   
-  console.log(`[Refining] Selected frame ${bestIndex} with score ${bestScore.toFixed(2)}`);
+  const startUpscaledBase64 = await blobToBase64(startUpscaledBlob);
+  const endUpscaledBase64 = await blobToBase64(endUpscaledBlob);
   
-  const bestFrameBlob = base64ToBlob(bestKeyframeBase64, 'image/jpeg');
-  
-  // 4. Upscale (Gemini Vision)
-  const upscaledBlob = await runRefinerAgent(bestFrameBlob, plan);
-  const upscaledBase64 = await blobToBase64(upscaledBlob);
-  
-  // 5. Master Render (Veo)
-  const finalVideo = await runMasteringAgent(plan, upscaledBlob);
+  // 4. Master Render (Veo) - Dual Frame
+  const finalVideo = await runMasteringAgent(plan, startUpscaledBlob, endUpscaledBlob, prompt);
   
   return {
     ...finalVideo,
     keyframes,
-    consistencyScore: bestScore,
-    selectedKeyframe: upscaledBase64 // Store the upscaled version as the reference
+    // Store dual anchors
+    anchorFrames: {
+      start: {
+        original: startFrameBase64,
+        upscaled: startUpscaledBase64
+      },
+      end: {
+        original: endFrameBase64,
+        upscaled: endUpscaledBase64
+      }
+    }
   };
 };
 
@@ -236,9 +266,51 @@ export const extractFrameFromBlob = async (videoBlob: Blob, timeOffset: number =
 /**
  * DIRECTOR AGENT (Gemini 3 Pro)
  * Deconstructs the user prompt into a production plan.
+ * Now optionally takes character/environment images to ensure visual consistency.
  */
-export const runDirectorAgent = async (userPrompt: string): Promise<DirectorPlan> => {
+export const runDirectorAgent = async (
+  userPrompt: string, 
+  characterImage?: Blob, 
+  environmentImage?: Blob
+): Promise<DirectorPlan> => {
   console.log('[Director] Planning production...');
+
+  let visualContext = "";
+  
+  // If images are provided, we first get a visual description to anchor the plan
+  if (characterImage || environmentImage) {
+    console.log('[Director] Analyzing visual context from provided images...');
+    const parts: any[] = [{ text: "Describe the subject and environment in these images for a video production plan. Focus on visual details that must remain consistent." }];
+    
+    if (characterImage) {
+      parts.push({
+        inlineData: {
+          mimeType: 'image/png',
+          data: await blobToBase64(characterImage)
+        }
+      });
+    }
+    
+    if (environmentImage) {
+      parts.push({
+        inlineData: {
+          mimeType: 'image/png',
+          data: await blobToBase64(environmentImage)
+        }
+      });
+    }
+
+    try {
+      const visualAnalysis = await aiService.client.models.generateContent({
+        model: 'gemini-3-pro-image-preview',
+        contents: { parts }
+      });
+      visualContext = visualAnalysis.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      console.log('[Director] Visual analysis complete.');
+    } catch (e) {
+      console.warn('[Director] Visual analysis failed, falling back to text only:', e);
+    }
+  }
 
   const schema: Schema = {
     type: Type.OBJECT,
@@ -269,7 +341,16 @@ export const runDirectorAgent = async (userPrompt: string): Promise<DirectorPlan
                 required: ["start_time", "end_time", "prompt", "camera_movement"]
               }
             },
-            master_prompt: { type: Type.STRING, description: "Combined prompt with timestamps for Veo 3.1. Format: [00:00-00:04] Shot description. [00:04-00:08] Next shot description." }
+            master_prompt: { type: Type.STRING, description: "Combined prompt with timestamps for Veo 3.1. Format: [00:00-00:04] Shot description. [00:04-00:08] Next shot description." },
+            transition: {
+              type: Type.OBJECT,
+              description: "Transition effect to next shot (null for last scene). Use ONLY if this is NOT the last scene.",
+              properties: {
+                type: { type: Type.STRING, description: "FFmpeg xfade type. Choose from: 'fade', 'fadeblack', 'dissolve', 'pixelize', 'wipeh', 'wiped'. Default: 'fade'." },
+                duration: { type: Type.NUMBER, description: "Transition duration in seconds (0.2-1.5 recommended). Shorter = punchy, Longer = smooth." }
+              },
+              required: ["type", "duration"]
+            }
           },
           required: ["id", "order", "duration_seconds", "segments", "master_prompt"]
         }
@@ -280,11 +361,13 @@ export const runDirectorAgent = async (userPrompt: string): Promise<DirectorPlan
   };
 
     await waitForQuota('TEXT_GEN'); // Director uses Gemini 3 Pro (Text)
-    const response = await ai.models.generateContent({
+    const response = await aiService.client.models.generateContent({
     model: 'gemini-3-pro-preview',
     contents: `You are an expert Film Director and Cinematographer with complete creative control.
                Analyze the user's requirements and break down the narrative into a DYNAMIC scene structure for Veo 3.1 video generation.
+               
                User Prompt: "${userPrompt}"
+               ${visualContext ? `Visual Context from uploaded images: "${visualContext}"` : ""}
                
                *** CRITICAL: DYNAMIC DIRECTOR MODE ***
                You have full authority to decide:
@@ -347,9 +430,20 @@ export const runDirectorAgent = async (userPrompt: string): Promise<DirectorPlan
               {"start_time": "00:00", "end_time": "00:03", "prompt": "Wide shot establishing", "camera_movement": "Static wide"},
               {"start_time": "00:03", "end_time": "00:06", "prompt": "Hero reaction close up", "camera_movement": "Push in"}
             ],
-            "master_prompt": "[00:00-00:03] Static wide shot, cyberpunk city street at night, neon signs reflecting on wet pavement. [00:03-00:06] Push in close up on hero's face, neon reflection in eyes, determined expression. SFX: Distant thunder, rain ambience."
-          }
-        ],
+             "master_prompt": "[00:00-00:03] Static wide shot, cyberpunk city street at night, neon signs reflecting on wet pavement. [00:03-00:06] Push in close up on hero's face, neon reflection in eyes, determined expression. SFX: Distant thunder, rain ambience.",
+             "transition": {"type": "fade", "duration": 0.5}
+           },
+           {
+             "id": "scene-2",
+             "order": 2,
+             "duration_seconds": 4,
+             "segments": [
+               {"start_time": "00:00", "end_time": "00:04", "prompt": "Close up emotional climax", "camera_movement": "Slow zoom out"}
+             ],
+             "master_prompt": "[00:00-00:04] Hero smiles as camera slowly zooms out, revealing triumphant pose under neon lights. SFX: triumphant orchestral swell. (no subtitles)"
+             // NOTE: No "transition" field for last scene
+           }
+         ],
         "reasoning": "Why this structure serves the narrative"
       }
 
@@ -376,13 +470,21 @@ export const runDirectorAgent = async (userPrompt: string): Promise<DirectorPlan
       "[MM:SS-MM:SS] Cinematography. Subject. Action. Context. Style. Audio. (no subtitles)"
 
       CRITICAL RULES:
-      - 'subject_prompt' and 'environment_prompt' must be reusable bible entries
-      - Each segment's prompt MUST include full subject description
-      - Timestamps must be continuous (no gaps)
-      - Total duration per scene: 1-8 seconds (YOU decide)
-      - Dialogue format: "Character says: Words" (use COLON, no quotes)
-      - Include audio cues in every segment description
-      - Append "(no subtitles)" to end of master_prompt
+       - 'subject_prompt' and 'environment_prompt' must be reusable bible entries
+       - Each segment's prompt MUST include full subject description
+       - Timestamps must be continuous (no gaps)
+       - Total duration per scene: 1-8 seconds (YOU decide)
+       - Dialogue format: "Character says: Words" (use COLON, no quotes)
+       - Include audio cues in every segment description
+       - Append "(no subtitles)" to end of master_prompt
+       - TRANSITION RULES:
+         * Add "transition" field ONLY for scenes that are NOT the last one
+         * Last scene: never include "transition" field
+         * Choose transition type based on pacing:
+           - Quick cuts/Action: 'fade' duration 0.3-0.5
+           - Emotional/Drama: 'fadeblack' duration 0.8-1.5
+           - Standard continuity: 'fade' duration 0.5 (default)
+         * Available types: 'fade', 'fadeblack', 'dissolve', 'pixelize', 'wipeh', 'wiped'
       `
     }
   });
@@ -457,7 +559,7 @@ CRITICAL RULES:
     console.log('[Artist] User provided character reference — extrapolating 3-view sheet...');
     
     await waitForQuota('IMAGE_GEN');
-    charResponse = await ai.models.generateContent({
+    charResponse = await aiService.client.models.generateContent({
       model: ARTIST_MODEL,
       contents: [
         { text: `Using this reference photo of the character, ${charTurnaroundPrompt}` },
@@ -472,7 +574,7 @@ CRITICAL RULES:
     console.log('[Artist] No user reference — generating character from description...');
     
     await waitForQuota('IMAGE_GEN');
-    charResponse = await ai.models.generateContent({
+    charResponse = await aiService.client.models.generateContent({
       model: ARTIST_MODEL,
       contents: charTurnaroundPrompt,
       config: {
@@ -493,6 +595,18 @@ CRITICAL RULES:
     base64: charBase64,
     source: userCharacter ? 'user' : 'ai'
   });
+
+  // Also include original user reference for maximum fidelity in video gen
+  if (userCharacter) {
+    assets.push({
+      id: `orig-char-${crypto.randomUUID()}`,
+      type: 'character',
+      url: URL.createObjectURL(userCharacter),
+      blob: userCharacter,
+      source: 'user'
+    });
+  }
+
   console.log('[Artist] ✅ Character turnaround sheet ready.');
 
   // Safety buffer for API quota - redundantly handled by QuotaGuard but kept for clarity
@@ -521,7 +635,7 @@ CRITICAL RULES:
     console.log('[Artist] User provided environment reference — extrapolating reference sheet...');
     
     await waitForQuota('IMAGE_GEN');
-    envResponse = await ai.models.generateContent({
+    envResponse = await aiService.client.models.generateContent({
       model: ARTIST_MODEL,
       contents: [
         { text: `Using this reference photo of the location, ${envTurnaroundPrompt}` },
@@ -535,7 +649,7 @@ CRITICAL RULES:
     console.log('[Artist] No user reference — generating environment from description...');
     
     await waitForQuota('IMAGE_GEN');
-    envResponse = await ai.models.generateContent({
+    envResponse = await aiService.client.models.generateContent({
       model: ARTIST_MODEL,
       contents: envTurnaroundPrompt,
       config: {
@@ -556,6 +670,18 @@ CRITICAL RULES:
     base64: envBase64,
     source: userEnvironment ? 'user' : 'ai'
   });
+
+  // Also include original user reference for maximum fidelity in video gen
+  if (userEnvironment) {
+    assets.push({
+      id: `orig-env-${crypto.randomUUID()}`,
+      type: 'background',
+      url: URL.createObjectURL(userEnvironment),
+      blob: userEnvironment,
+      source: 'user'
+    });
+  }
+
   console.log('[Artist] ✅ Environment reference sheet ready.');
 
   console.log(`[Artist] Production bible complete: ${assets.length} turnaround sheets.`);
@@ -631,7 +757,7 @@ export const runShotDraftingAgent = async (
 
       await waitForQuota('VIDEO_GEN');
       
-      let operation = await ai.models.generateVideos({
+      let operation = await aiService.client.models.generateVideos({
         model: 'veo-3.1-fast-generate-preview',
         prompt: finalPrompt,
         config: {
@@ -645,7 +771,7 @@ export const runShotDraftingAgent = async (
       // Poll for completion
       while (!operation.done) {
         await new Promise(resolve => setTimeout(resolve, 5000));
-        operation = await ai.operations.getVideosOperation({ operation });
+        operation = await aiService.client.operations.getVideosOperation({ operation });
       }
 
       // Check for API-level errors in the operation object
@@ -660,7 +786,7 @@ export const runShotDraftingAgent = async (
         throw new Error(`Generation completed but returned no video. Check safety filters or quota.`);
       }
 
-      const res = await fetch(`${videoUri}&key=${process.env.API_KEY}`);
+      const res = await fetch(`${videoUri}&key=${import.meta.env.VITE_GEMINI_API_KEY}`);
       if (!res.ok) throw new Error(`Failed to fetch video blob: ${res.statusText}`);
       const blob = await res.blob();
 
@@ -731,7 +857,7 @@ export const runSceneGenerationAgent = async (
 
       await waitForQuota('VIDEO_GEN');
       
-      let operation = await ai.models.generateVideos({
+      let operation = await aiService.client.models.generateVideos({
         model: 'veo-3.1-fast-generate-preview',
         prompt: finalPrompt,
         config: {
@@ -745,7 +871,7 @@ export const runSceneGenerationAgent = async (
       // Poll for completion
       while (!operation.done) {
         await new Promise(resolve => setTimeout(resolve, 5000));
-        operation = await ai.operations.getVideosOperation({ operation });
+        operation = await aiService.client.operations.getVideosOperation({ operation });
       }
 
       if (operation.error) {
@@ -759,7 +885,7 @@ export const runSceneGenerationAgent = async (
         throw new Error(`Generation completed but returned no video.`);
       }
 
-      const res = await fetch(`${videoUri}&key=${process.env.API_KEY}`);
+      const res = await fetch(`${videoUri}&key=${import.meta.env.VITE_GEMINI_API_KEY}`);
       if (!res.ok) throw new Error(`Failed to fetch video blob: ${res.statusText}`);
       const blob = await res.blob();
 
@@ -806,14 +932,14 @@ export const runProductionPipeline = async (plan: DirectorPlan, assets: AssetIte
  * ENGINEER AGENT - PHASE 2: REFINE (Gemini 3 Pro Vision)
  * Upscales a specific frame to be used as an anchor.
  */
-export const runRefinerAgent = async (lowResBlob: Blob, plan: DirectorPlan): Promise<Blob> => {
+export const runRefinerAgent = async (lowResBlob: Blob, plan: DirectorPlan, specificPrompt?: string): Promise<Blob> => {
   console.log('[Engineer] Refining anchor frame...');
 
   const lowResBase64 = await blobToBase64(lowResBlob);
-  const actionPrompt = plan.shots?.[0]?.prompt || "Action occurring in the scene";
+  const actionPrompt = specificPrompt || plan.shots?.[0]?.prompt || "Action occurring in the scene";
 
   // Use Gemini 3 Pro to Hallucinate details (Upscale)
-  const response = await ai.models.generateContent({
+  const response = await aiService.client.models.generateContent({
     model: 'gemini-3-pro-image-preview',
     contents: {
       parts: [
@@ -865,42 +991,47 @@ export const runRefinerAgent = async (lowResBlob: Blob, plan: DirectorPlan): Pro
  * ENGINEER AGENT - PHASE 3: MASTER (Veo 3.1)
  * Renders final video using the Anchor Frame.
  */
-export const runMasteringAgent = async (plan: DirectorPlan, anchorFrameBlob: Blob): Promise<VideoArtifact> => {
-  console.log('[Engineer] Rendering final master...');
+export const runMasteringAgent = async (plan: DirectorPlan, startAnchor: Blob, endAnchor: Blob, specificPrompt?: string): Promise<VideoArtifact> => {
+  console.log('[Engineer] Rendering final master (Dual-Frame)...');
 
-  const anchorBase64 = await blobToBase64(anchorFrameBlob);
-  const actionPrompt = plan.shots?.[0]?.prompt || "Action occurring in the scene";
+  const startBase64 = await blobToBase64(startAnchor);
+  const endBase64 = await blobToBase64(endAnchor);
+  const actionPrompt = specificPrompt || plan.shots?.[0]?.prompt || "Action occurring in the scene";
 
-  let operation = await ai.models.generateVideos({
+  // Use Veo 3.1 with Image-to-Video (Start + End frames)
+  let operation = await aiService.client.models.generateVideos({
     model: 'veo-3.1-generate-preview', // High quality model
     prompt: `${actionPrompt}. ${plan.visual_style}. High Fidelity.`,
+    
+    // Start Frame
+    image: {
+      imageBytes: startBase64,
+      mimeType: 'image/png'
+    },
 
     config: {
       numberOfVideos: 1,
       resolution: '1080p',
       aspectRatio: '16:9',
-      referenceImages: [
-        {
-          image: {
-            imageBytes: anchorBase64,
-            mimeType: 'image/png'
-          },
-          // Using ASSET here locks the visual fidelity strongly to our upscaled frame
-          referenceType: VideoGenerationReferenceType.ASSET
-        }
-      ]
+      
+      // End Frame
+      lastFrame: {
+        imageBytes: endBase64,
+        mimeType: 'image/png'
+      }
+      // Note: referenceImages (Asset/Style) are mutually exclusive with image/lastFrame
     }
   });
 
   while (!operation.done) {
     await new Promise(resolve => setTimeout(resolve, 8000)); // Slower polling for HQ
-    operation = await ai.operations.getVideosOperation({ operation });
+    operation = await aiService.client.operations.getVideosOperation({ operation });
   }
 
   const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
   if (!videoUri) throw new Error("Master generation failed");
 
-  const res = await fetch(`${videoUri}&key=${process.env.API_KEY}`);
+  const res = await fetch(`${videoUri}&key=${import.meta.env.VITE_GEMINI_API_KEY}`);
   const blob = await res.blob();
 
   return {

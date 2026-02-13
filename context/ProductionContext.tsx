@@ -14,7 +14,7 @@ const initialState: ProductionState = {
     assets: [],
     shots: [],
     draftVideo: null,
-    anchorFrame: null,
+    anchorFrames: null,
     finalVideo: null
   },
 

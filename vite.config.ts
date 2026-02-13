@@ -10,20 +10,19 @@ export default defineConfig(({ mode }) => {
         port: 3000,
         host: '0.0.0.0',
         headers: {
-          'Cross-Origin-Embedder-Policy': 'require-corp',
+          'Cross-Origin-Embedder-Policy': 'credentialless',
           'Cross-Origin-Opener-Policy': 'same-origin',
         },
       },
       plugins: [react()],
+      define: {
+        'import.meta.env.VITE_GEMINI_API_KEY': JSON.stringify(env.VITE_GEMINI_API_KEY || env.GEMINI_API_KEY),
+      },
       test: {
         globals: true,
         environment: 'jsdom',
         setupFiles: './test/setup.ts',
         include: ['**/*.{test,spec}.{ts,tsx}'],
-      },
-      define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
       },
       resolve: {
         alias: {
