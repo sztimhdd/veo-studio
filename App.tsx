@@ -82,7 +82,19 @@ const StudioContent: React.FC<{
         throw new Error(`Failed to load assets for ${scenario.label}`);
       }
 
+      // Check for HTML response (SPA fallback 404)
+      const promptContentType = promptRes.headers.get('content-type');
+      if (promptContentType && promptContentType.includes('text/html')) {
+        throw new Error(`Asset not found (server returned HTML for ${scenario.promptFile})`);
+      }
+
       const promptText = await promptRes.text();
+      
+      // Secondary check: if the text looks like HTML doctype
+      if (promptText.trim().toLowerCase().startsWith('<!doctype html') || promptText.trim().toLowerCase().startsWith('<html')) {
+        throw new Error(`Asset not found (content is HTML for ${scenario.promptFile})`);
+      }
+
       const charBlob = await charRes.blob();
       const envBlob = await envRes.blob();
 
