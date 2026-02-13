@@ -20,6 +20,30 @@ import {
   ImageFile,
 } from './types';
 
+const TEST_SCENARIOS = [
+  {
+    id: 'cat-food',
+    label: '🐱 Cat Food',
+    promptFile: '/test/test_prompt1.txt',
+    charFile: '/test/Belle.png',
+    envFile: '/test/env.jpg'
+  },
+  {
+    id: 'kyoto-dog',
+    label: '🐕 Kyoto Dog',
+    promptFile: '/test/test_prompt2.txt',
+    charFile: '/test/Rover.png',
+    envFile: '/test/kyoto-japan-26.jpg'
+  },
+  {
+    id: 'bolivia-cat',
+    label: '🇧🇴 Bolivia Cat',
+    promptFile: '/test/test_prompt3.txt',
+    charFile: '/test/Belle.png',
+    envFile: '/test/bolivia-coast.jpg'
+  }
+];
+
 // Wrapper component to access context
 const StudioContent: React.FC<{
   prompt: string;
@@ -30,6 +54,55 @@ const StudioContent: React.FC<{
   const { state, dispatch } = useProduction();
   const [userCharacter, setUserCharacter] = useState<ImageFile | null>(null);
   const [userEnvironment, setUserEnvironment] = useState<ImageFile | null>(null);
+  const [isLoadingTest, setIsLoadingTest] = useState(false);
+
+  const fileToImageFile = (file: File): Promise<ImageFile> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = (reader.result as string).split(',')[1];
+        if (base64) resolve({ file, base64 });
+        else reject(new Error('Failed to read file'));
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const loadTestScenario = async (scenario: typeof TEST_SCENARIOS[0]) => {
+    setIsLoadingTest(true);
+    try {
+      const [promptRes, charRes, envRes] = await Promise.all([
+        fetch(scenario.promptFile),
+        fetch(scenario.charFile),
+        fetch(scenario.envFile)
+      ]);
+
+      if (!promptRes.ok || !charRes.ok || !envRes.ok) {
+        throw new Error(`Failed to load assets for ${scenario.label}`);
+      }
+
+      const promptText = await promptRes.text();
+      const charBlob = await charRes.blob();
+      const envBlob = await envRes.blob();
+
+      // Get filenames from paths
+      const charName = scenario.charFile.split('/').pop() || 'char.png';
+      const envName = scenario.envFile.split('/').pop() || 'env.jpg';
+
+      const charFile = new File([charBlob], charName, { type: charBlob.type });
+      const envFile = new File([envBlob], envName, { type: envBlob.type });
+
+      setUserCharacter(await fileToImageFile(charFile));
+      setUserEnvironment(await fileToImageFile(envFile));
+      setPrompt(promptText.trim());
+    } catch (e) {
+      console.error("Test load failed:", e);
+      alert(`Failed to load test set: ${scenario.label}`);
+    } finally {
+      setIsLoadingTest(false);
+    }
+  };
 
   const startPipeline = async () => {
     if (!prompt.trim()) return;
@@ -187,45 +260,19 @@ const StudioContent: React.FC<{
             className="w-full bg-gray-900/50 border border-gray-700 rounded-2xl p-6 text-white text-lg placeholder-gray-600 focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 outline-none min-h-[140px] mb-8 shadow-inner transition-all"
           />
 
-          <div className="flex gap-4 items-center">
-            <button
-              onClick={async () => {
-                const fileToImageFile = (file: File): Promise<ImageFile> => {
-                  return new Promise((resolve, reject) => {
-                    const reader = new FileReader();
-                    reader.onload = () => {
-                      const base64 = (reader.result as string).split(',')[1];
-                      if (base64) resolve({ file, base64 });
-                      else reject(new Error('Failed to read file'));
-                    };
-                    reader.onerror = reject;
-                    reader.readAsDataURL(file);
-                  });
-                };
-
-                try {
-                  const belleRes = await fetch('/test/Belle.png');
-                  const envRes = await fetch('/test/env.jpg');
-
-                  if (!belleRes.ok || !envRes.ok) throw new Error('Test assets not found in /public/test/');
-
-                  const belleBlob = await belleRes.blob();
-                  const envBlob = await envRes.blob();
-
-                  const belleFile = new File([belleBlob], 'Belle.png', { type: 'image/png' });
-                  const envFile = new File([envBlob], 'env.jpg', { type: 'image/jpeg' });
-
-                  setUserCharacter(await fileToImageFile(belleFile));
-                  setUserEnvironment(await fileToImageFile(envFile));
-                  setPrompt("Create a 10-second cat food commercial. The main character is a fluffy white cat named Belle. Start with Belle looking hungry and meowing at an empty bowl. She discovers a can of premium cat food opening, with steam rising and chunks of meat visible. Belle eats happily, purring and licking her lips. End with text overlay: 'Belle loves [Brand] Cat Food – Nutritious and Delicious!' Upbeat music, vibrant colors, smooth animation.");
-                } catch (e) {
-                  console.error("Failed to load test set:", e);
-                  alert("Failed to load test set. Make sure /public/test/Belle.png and env.jpg exist.");
-                }
-              }}
-              className="px-6 py-3 rounded-full text-indigo-400 border border-indigo-500/30 hover:bg-indigo-500/10 transition-all font-medium text-sm">
-              Test Set
-            </button>
+          <div className="flex gap-4 items-center flex-wrap justify-center">
+            <div className="flex gap-2">
+              {TEST_SCENARIOS.map((scenario) => (
+                <button
+                  key={scenario.id}
+                  onClick={() => loadTestScenario(scenario)}
+                  disabled={isLoadingTest}
+                  className="px-4 py-2 rounded-full text-indigo-400 border border-indigo-500/30 hover:bg-indigo-500/10 transition-all font-medium text-xs whitespace-nowrap disabled:opacity-50">
+                  {isLoadingTest ? 'Loading...' : scenario.label}
+                </button>
+              ))}
+            </div>
+            <div className="w-px h-8 bg-gray-800 mx-2 hidden md:block"></div>
             <button
               onClick={startPipeline}
               disabled={!prompt.trim()}
