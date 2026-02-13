@@ -742,6 +742,12 @@ export const runShotDraftingAgent = async (
     finalPrompt = `CRITICAL DIRECTOR NOTE: ${feedback}. ${finalPrompt}`;
   }
   
+  // Enforce Veo 3.1 limit: Max 3 reference images
+  const finalReferences = references.slice(0, 3);
+  if (references.length > 3) {
+    console.log(`[Engineer] Shot ${shot.order}: ⚠️ TRUNCATING ${references.length} references to 3 to meet API limits. (Fix Applied)`);
+  }
+
   console.log(`[Engineer] Shot ${shot.order} Prompt: ${finalPrompt}`);
 
 // Retry loop for transient errors
@@ -764,7 +770,7 @@ export const runShotDraftingAgent = async (
           numberOfVideos: 1,
           resolution: '720p',
           aspectRatio: '16:9',
-          referenceImages: references
+          referenceImages: finalReferences
         }
       });
 
@@ -842,6 +848,12 @@ export const runSceneGenerationAgent = async (
     finalPrompt = `CRITICAL DIRECTOR NOTE: ${feedback}. ${finalPrompt}`;
   }
   
+  // Enforce Veo 3.1 limit: Max 3 reference images
+  const finalReferences = references.slice(0, 3);
+  if (references.length > 3) {
+    console.log(`[Engineer] Scene ${scene.order}: ⚠️ TRUNCATING ${references.length} references to 3 to meet API limits. (Fix Applied)`);
+  }
+
   console.log(`[Engineer] Scene ${scene.order} Master Prompt: ${finalPrompt.substring(0, 100)}...`);
 
   // Retry loop for transient errors
@@ -864,7 +876,7 @@ export const runSceneGenerationAgent = async (
           numberOfVideos: 1,
           resolution: '720p',
           aspectRatio: '16:9',
-          referenceImages: references
+          referenceImages: finalReferences
         }
       });
 
