@@ -863,7 +863,7 @@ export const runSceneGenerationAgent = async (
 
   console.log(`[Engineer] Scene ${scene.order} Master Prompt: ${finalPrompt.substring(0, 100)}...`);
 
-  // Retry loop for transient errors
+  // Retry loop for transient errors and safety fallbacks
   let lastError;
   const maxAttempts = 5;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -875,11 +875,22 @@ export const runSceneGenerationAgent = async (
       }
 
       // STRATEGY: 
-      // Attempts 1-3: Use up to 3 references (Standard)
-      // Attempts 4-5: Fallback to 1 reference (Character only) to avoid safety/complexity refusals
-      let currentReferences = finalReferences;
+      // Attempt 1: All references (Standard)
+      // Attempt 2: If previous was Safety/Third-Party, use ONLY 'character' type (generated assets)
+      // Attempt 3: If previous was Safety/Third-Party, use NO references (Text-to-Video)
+      // Attempt 4+: Fallback to single character reference (recovery mode)
       
-      if (attempt >= 4) {
+      let currentReferences = finalReferences;
+      const isSafetyError = lastError?.message?.includes('Safety Filter') || lastError?.message?.includes('guardrails');
+      
+      if (attempt === 2 && isSafetyError) {
+        console.warn(`[Engineer] Retry ${attempt}: ⚠️ Safety Filter triggered. Dropping user/style references, keeping only generated Character.`);
+        // Filter to keep only ASSET type (which usually corresponds to the generated character sheet)
+        currentReferences = references.filter(r => r.referenceType === VideoGenerationReferenceType.ASSET);
+      } else if (attempt === 3 && isSafetyError) {
+        console.warn(`[Engineer] Retry ${attempt}: ⚠️ Persistent Safety Filter. Dropping ALL references (Text-to-Video only).`);
+        currentReferences = [];
+      } else if (attempt >= 4) {
         console.warn(`[Engineer] Retry ${attempt}: ⚠️ Dropping to 1 reference to recover from persistent failures.`);
         currentReferences = references.slice(0, 1);
       }
@@ -903,6 +914,14 @@ export const runSceneGenerationAgent = async (
         operation = await aiService.client.operations.getVideosOperation({ operation });
       }
 
+      // Check for RAI/Safety filtering in response
+      if (operation.response?.raiMediaFilteredReasons?.length > 0) {
+          const reason = operation.response.raiMediaFilteredReasons.join(', ');
+          console.warn(`[Engineer] Scene ${scene.order}: Content filtered: ${reason}`);
+          // Throw specific error to trigger safety fallback logic in next loop
+          throw new Error(`Safety Filter: ${reason}`);
+      }
+
       if (operation.error) {
         console.error(`[Engineer] Operation failed for scene ${scene.order}:`, operation.error);
         throw new Error(`API Error: ${operation.error.message || 'Unknown API error'}`);
@@ -910,6 +929,7 @@ export const runSceneGenerationAgent = async (
 
       const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
       if (!videoUri) {
+        // Double check for hidden safety reasons in the full object
         console.error(`[Engineer] No video URI for scene ${scene.order}. Full Response:`, JSON.stringify(operation, null, 2));
         throw new Error(`Generation completed but returned no video. Likely Safety Filter or Model Refusal.`);
       }
