@@ -808,7 +808,7 @@ export const runShotDraftingAgent = async (
   }
   
   // Enforce Veo 3.1 limit: Max 3 reference images
-  const finalReferences = references.slice(0, 3);
+  const finalReferences = references.length > 0 ? references.slice(0, 3) : undefined;
   if (references.length > 3) {
     console.log(`[Engineer] Shot ${shot.order}: ⚠️ TRUNCATING ${references.length} references to 3 to meet API limits. (Fix Applied)`);
   }
@@ -827,32 +827,45 @@ export const runShotDraftingAgent = async (
       }
 
       // STRATEGY: Progressive safety fallbacks
-      let currentReferences = finalReferences;
+      let currentReferences: VideoGenerationReferenceImage[] | undefined = finalReferences;
       let currentPrompt = finalPrompt;
       const isSafetyError = lastError?.message?.includes('Safety Filter') || lastError?.message?.includes('guardrails') || lastError?.message?.includes('RAI');
       
       if (attempt === 2 && isSafetyError) {
         console.warn(`[Engineer] Retry ${attempt}: ⚠️ Safety Filter triggered. Stripping metadata from references.`);
-        currentReferences = await Promise.all(finalReferences.map(async (ref) => ({
-          ...ref,
-          image: {
-            ...ref.image,
-            imageBytes: await blobToBase64(await stripImageMetadata(base64ToBlob(ref.image.imageBytes as string)))
-          }
-        })));
+        if (finalReferences) {
+          currentReferences = await Promise.all(finalReferences.map(async (ref) => ({
+            ...ref,
+            image: {
+              ...ref.image,
+              imageBytes: await blobToBase64(await stripImageMetadata(base64ToBlob(ref.image.imageBytes as string)))
+            }
+          })));
+        }
       } else if (attempt === 3 && isSafetyError) {
         console.warn(`[Engineer] Retry ${attempt}: ⚠️ Persistent Safety Filter. Sanitizing prompt.`);
         currentPrompt = sanitizePrompt(finalPrompt);
       } else if (attempt === 4 && isSafetyError) {
         console.warn(`[Engineer] Retry ${attempt}: ⚠️ Dropping user references, keeping AI assets.`);
-        currentReferences = references.filter(r => {
+        const aiRefs = references.filter(r => {
           // Find the asset in the original assets list to check source
           const asset = assets.find(a => a.base64 === (r.image.imageBytes as string));
           return asset?.source === 'ai';
         });
+        currentReferences = aiRefs.length > 0 ? aiRefs : undefined;
       } else if (attempt >= 5) {
         console.warn(`[Engineer] Retry ${attempt}: ⚠️ Dropping ALL references to recover.`);
-        currentReferences = [];
+        currentReferences = undefined;
+      }
+
+      // Veo 3.1 Fast Reference Image mode requires > 1 image. 
+      // If we have exactly 1, duplicate it as STYLE to satisfy the constraint.
+      if (currentReferences && currentReferences.length === 1) {
+        console.log(`[Engineer] Shot ${shot.order}: Duplicating single reference to satisfy API constraint (>1).`);
+        currentReferences = [
+          currentReferences[0],
+          { ...currentReferences[0], referenceType: VideoGenerationReferenceType.STYLE }
+        ];
       }
 
       await waitForQuota('VIDEO_GEN');
@@ -864,7 +877,7 @@ export const runShotDraftingAgent = async (
           numberOfVideos: 1,
           resolution: '720p',
           aspectRatio: '16:9',
-          referenceImages: currentReferences,
+          ...(currentReferences ? { referenceImages: currentReferences } : {}),
           includeRaiReason: true
         } as any
       });
@@ -951,7 +964,7 @@ export const runSceneGenerationAgent = async (
   }
   
   // Enforce Veo 3.1 limit: Max 3 reference images
-  const finalReferences = references.slice(0, 3);
+  const finalReferences = references.length > 0 ? references.slice(0, 3) : undefined;
   if (references.length > 3) {
     console.log(`[Engineer] Scene ${scene.order}: ⚠️ TRUNCATING ${references.length} references to 3 to meet API limits. (Fix Applied)`);
   }
@@ -970,31 +983,44 @@ export const runSceneGenerationAgent = async (
       }
 
       // STRATEGY: Progressive safety fallbacks
-      let currentReferences = finalReferences;
+      let currentReferences: VideoGenerationReferenceImage[] | undefined = finalReferences;
       let currentPrompt = finalPrompt;
       const isSafetyError = lastError?.message?.includes('Safety Filter') || lastError?.message?.includes('guardrails') || lastError?.message?.includes('RAI');
       
       if (attempt === 2 && isSafetyError) {
         console.warn(`[Engineer] Retry ${attempt}: ⚠️ Safety Filter triggered. Stripping metadata from references.`);
-        currentReferences = await Promise.all(finalReferences.map(async (ref) => ({
-          ...ref,
-          image: {
-            ...ref.image,
-            imageBytes: await blobToBase64(await stripImageMetadata(base64ToBlob(ref.image.imageBytes as string)))
-          }
-        })));
+        if (finalReferences) {
+          currentReferences = await Promise.all(finalReferences.map(async (ref) => ({
+            ...ref,
+            image: {
+              ...ref.image,
+              imageBytes: await blobToBase64(await stripImageMetadata(base64ToBlob(ref.image.imageBytes as string)))
+            }
+          })));
+        }
       } else if (attempt === 3 && isSafetyError) {
         console.warn(`[Engineer] Retry ${attempt}: ⚠️ Persistent Safety Filter. Sanitizing prompt.`);
         currentPrompt = sanitizePrompt(finalPrompt);
       } else if (attempt === 4 && isSafetyError) {
         console.warn(`[Engineer] Retry ${attempt}: ⚠️ Dropping user references, keeping AI assets.`);
-        currentReferences = references.filter(r => {
+        const aiRefs = references.filter(r => {
           const asset = assets.find(a => a.base64 === (r.image.imageBytes as string));
           return asset?.source === 'ai';
         });
+        currentReferences = aiRefs.length > 0 ? aiRefs : undefined;
       } else if (attempt >= 5) {
         console.warn(`[Engineer] Retry ${attempt}: ⚠️ Dropping ALL references to recover.`);
-        currentReferences = [];
+        currentReferences = undefined;
+      }
+
+      // Veo 3.1 Fast Reference Image mode requires > 1 image. 
+      // If we have exactly 1, duplicate it as STYLE to satisfy the constraint.
+      if (currentReferences && currentReferences.length === 1) {
+        console.log(`[Engineer] Scene ${scene.order}: Duplicating single reference to satisfy API constraint (>1).`);
+        currentReferences = [
+          currentReferences[0],
+          { ...currentReferences[0], referenceType: VideoGenerationReferenceType.STYLE }
+        ];
       }
 
       await waitForQuota('VIDEO_GEN');
@@ -1006,7 +1032,7 @@ export const runSceneGenerationAgent = async (
           numberOfVideos: 1,
           resolution: '720p',
           aspectRatio: '16:9',
-          referenceImages: currentReferences,
+          ...(currentReferences ? { referenceImages: currentReferences } : {}),
           includeRaiReason: true
         } as any
       });
