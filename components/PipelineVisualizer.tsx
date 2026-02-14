@@ -129,22 +129,39 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate, o
                                     if (btn) btn.innerText = 'Stitching...';
                                     try {
                                         console.log('[PipelineVisualizer] Importing stitchService...');
-                                        const { stitchVideos } = await import('../services/stitchService');
+                                        const { stitchVideos, generateCaptions } = await import('../services/stitchService');
                                         console.log('[PipelineVisualizer] Preparing transitions...');
-                                        // Take all transitions except the last one (which corresponds to the last scene having no next scene)
-                                        // We map ALL scenes to preserve index alignment, then slice off the last element.
                                         const transitions = state.artifacts.plan?.scenes?.map(s => s.transition).slice(0, -1) || [];
                                         
                                         console.log(`[PipelineVisualizer] Calling stitchVideos with ${state.artifacts.shots.length} shots and ${transitions.length} transitions.`);
                                         const { url, extension } = await stitchVideos(state.artifacts.shots, transitions);
                                         console.log('[PipelineVisualizer] Stitching complete. Triggering download...');
                                         
+                                        // 1. Download Video
                                         const link = document.createElement('a');
                                         link.href = url;
                                         link.download = `veo-studio-production.${extension}`;
                                         document.body.appendChild(link);
                                         link.click();
                                         document.body.removeChild(link);
+
+                                        // 2. Generate & Download Captions (SRT)
+                                        if (state.artifacts.plan) {
+                                            console.log('[PipelineVisualizer] Generating captions...');
+                                            const srtContent = generateCaptions(state.artifacts.plan);
+                                            if (srtContent) {
+                                                const srtBlob = new Blob([srtContent], { type: 'text/srt' });
+                                                const srtUrl = URL.createObjectURL(srtBlob);
+                                                const srtLink = document.createElement('a');
+                                                srtLink.href = srtUrl;
+                                                srtLink.download = `veo-studio-production.srt`;
+                                                document.body.appendChild(srtLink);
+                                                srtLink.click();
+                                                document.body.removeChild(srtLink);
+                                                URL.revokeObjectURL(srtUrl);
+                                            }
+                                        }
+
                                     } catch (e) {
                                         console.error(e);
                                         alert('Stitching failed');

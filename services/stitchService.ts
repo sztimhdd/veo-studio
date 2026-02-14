@@ -1,9 +1,67 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
-import { TransitionSpec, VideoArtifact } from '../types';
+import { TransitionSpec, VideoArtifact, DirectorPlan } from '../types';
 
 // Singleton FFmpeg instance (shared across VideoStitcher instances to avoid reloading)
 let sharedFFmpeg: FFmpeg | null = null;
+
+// Helper: Convert "MM:SS" to seconds
+const parseTime = (timeStr: string): number => {
+  const [min, sec] = timeStr.split(':').map(Number);
+  return min * 60 + sec;
+};
+
+// Helper: Convert seconds to SRT timestamp format "HH:MM:SS,mmm"
+const formatTimeSRT = (seconds: number): string => {
+  const pad = (n: number, z = 2) => ('00' + n).slice(-z);
+  
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  const ms = Math.floor((seconds % 1) * 1000);
+  
+  return `${pad(h)}:${pad(m)}:${pad(s)},${pad(ms, 3)}`;
+};
+
+/**
+ * Generates SRT captions from the Director Plan.
+ * Parses "Character says: ..." from segment prompts.
+ */
+export const generateCaptions = (plan: DirectorPlan): string => {
+  let srtContent = '';
+  let counter = 1;
+  let cumulativeOffset = 0;
+
+  plan.scenes.forEach((scene) => {
+    scene.segments.forEach((segment) => {
+      // Regex to extract dialogue: "Name says: Dialogue" (case insensitive)
+      // Supports quoted ("...") or unquoted (remainder of text)
+      // specific regex to handle both cases:
+      // 1. Quoted: \w+ says: "..."
+      // 2. Unquoted: \w+ says: ...
+      const quotedMatch = segment.prompt.match(/\b\w+\s+says:\s*(["'])([\s\S]*?)\1/i);
+      const unquotedMatch = segment.prompt.match(/\b\w+\s+says:\s*([^"'].*)/i);
+      
+      const dialogue = quotedMatch ? quotedMatch[2] : (unquotedMatch ? unquotedMatch[1] : null);
+      
+      if (dialogue) {
+        const cleanDialogue = dialogue.trim();
+        const start = cumulativeOffset + parseTime(segment.start_time);
+        const end = cumulativeOffset + parseTime(segment.end_time);
+        
+        srtContent += `${counter}\n`;
+        srtContent += `${formatTimeSRT(start)} --> ${formatTimeSRT(end)}\n`;
+        srtContent += `${cleanDialogue}\n\n`;
+        
+        counter++;
+      }
+    });
+    
+    cumulativeOffset += scene.duration_seconds;
+  });
+
+  return srtContent.trim();
+};
 
 const loadSharedFFmpeg = async (): Promise<FFmpeg> => {
   if (sharedFFmpeg) return sharedFFmpeg;

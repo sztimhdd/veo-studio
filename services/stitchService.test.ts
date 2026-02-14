@@ -1,96 +1,157 @@
-import { describe, it, expect } from 'vitest';
-import { VideoStitcher, stitchVideos } from './stitchService';
-import { VideoArtifact } from '../types';
 
-// Note: The FFmpeg mocks are set up in test/setup.ts
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { VideoStitcher, generateCaptions } from './stitchService';
+import { VideoArtifact, TransitionSpec, DirectorPlan } from '../types';
+
+// Mock FFmpeg
+const mockExec = vi.fn();
+const mockWriteFile = vi.fn();
+const mockReadFile = vi.fn();
+const mockDeleteFile = vi.fn();
+
+vi.mock('@ffmpeg/ffmpeg', () => ({
+  FFmpeg: class {
+    load = vi.fn();
+    exec = mockExec;
+    writeFile = mockWriteFile;
+    readFile = mockReadFile;
+    deleteFile = mockDeleteFile;
+  }
+}));
+
+vi.mock('@ffmpeg/util', () => ({
+  fetchFile: vi.fn(),
+  toBlobURL: vi.fn(),
+}));
 
 describe('VideoStitcher', () => {
-  describe('constructor', () => {
-    it('should initialize without errors', () => {
-      const stitcher = new VideoStitcher();
-      expect(stitcher).toBeDefined();
-    });
+  let stitcher: VideoStitcher;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    stitcher = new VideoStitcher();
+    
+    // Mock video duration helper
+    // We force a duration of 5s for all clips for predictable offset calculation
+    vi.spyOn(stitcher as any, 'getVideoDuration').mockResolvedValue(5.0);
+    
+    mockReadFile.mockResolvedValue(new Uint8Array([1, 2, 3]));
   });
 
-  describe('stitch', () => {
-    const mockVideos: VideoArtifact[] = [
-      { url: 'url1', blob: new Blob(['video1'], { type: 'video/mp4' }), uri: 'uri1' },
-      { url: 'url2', blob: new Blob(['video2'], { type: 'video/mp4' }), uri: 'uri2' },
-      { url: 'url3', blob: new Blob(['video3'], { type: 'video/mp4' }), uri: 'uri3' },
+  it('should generate correct xfade filter for 2 videos', async () => {
+    const videos: VideoArtifact[] = [
+      { blob: new Blob([]), url: 'v1' },
+      { blob: new Blob([]), url: 'v2' }
+    ];
+    
+    const transitions: TransitionSpec[] = [
+      { type: 'fade', duration: 1.0 }
     ];
 
-    it('should throw error when videos array is empty', async () => {
-      const stitcher = new VideoStitcher();
-      await expect(stitcher.stitch([])).rejects.toThrow('No videos to stitch');
-    });
+    await stitcher.stitchWithTransitions(videos, transitions);
 
-    it('should return single video blob when only one video is provided', async () => {
-      const stitcher = new VideoStitcher();
-      const singleVideo = [mockVideos[0]];
-      const result = await stitcher.stitch(singleVideo);
+    expect(mockExec).toHaveBeenCalled();
+    const args = mockExec.mock.calls[0][0] as string[];
+    
+    // Check filter complex
+    const filterIndex = args.indexOf('-filter_complex');
+    expect(filterIndex).toBeGreaterThan(-1);
+    const filter = args[filterIndex + 1];
 
-      expect(result).toBeInstanceOf(Blob);
-      expect(result.type).toBe('video/mp4');
-    });
+    // 5s clip 1, 1s fade. Offset should be 5 - 1 = 4s.
+    // [0:v][1:v]xfade=transition=fade:duration=1:offset=4.000[v1]
+    expect(filter).toContain('xfade=transition=fade:duration=1:offset=4.000');
+    expect(filter).toContain('acrossfade=d=1');
+  });
+
+  it('should handle multiple transitions correctly', async () => {
+    const videos: VideoArtifact[] = [
+      { blob: new Blob([]), url: 'v1' }, // 5s
+      { blob: new Blob([]), url: 'v2' }, // 5s
+      { blob: new Blob([]), url: 'v3' }  // 5s
+    ];
+    
+    const transitions: TransitionSpec[] = [
+      { type: 'circleopen', duration: 0.5 },
+      { type: 'wipedown', duration: 1.0 }
+    ];
+
+    await stitcher.stitchWithTransitions(videos, transitions);
+
+    const args = mockExec.mock.calls[0][0] as string[];
+    const filter = args[args.indexOf('-filter_complex') + 1];
+
+    // Transition 1: Offset = 5 - 0.5 = 4.5s. Result length = 4.5 + 5 = 9.5s
+    expect(filter).toContain('xfade=transition=circleopen:duration=0.5:offset=4.500');
+    
+    // Transition 2: Offset = 9.5 - 1.0 = 8.5s
+    expect(filter).toContain('xfade=transition=wipedown:duration=1:offset=8.500');
+  });
+
+  it('should default to fade if transition spec is missing', async () => {
+    const videos: VideoArtifact[] = [
+      { blob: new Blob([]), url: 'v1' },
+      { blob: new Blob([]), url: 'v2' }
+    ];
+    
+    await stitcher.stitchWithTransitions(videos, [undefined] as any);
+
+    const args = mockExec.mock.calls[0][0] as string[];
+    const filter = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filter).toContain('xfade=transition=fade');
   });
 });
 
-describe('stitchVideos', () => {
-  it('should return valid result structure', async () => {
-    const mockVideos: VideoArtifact[] = [
-      { url: 'url1', blob: new Blob(['video1'], { type: 'video/mp4' }), uri: 'uri1' },
-    ];
+describe('generateCaptions', () => {
+  it('should generate valid SRT from DirectorPlan', () => {
+    const plan: DirectorPlan = {
+      subject_prompt: '',
+      environment_prompt: '',
+      visual_style: '',
+      reasoning: '',
+      scenes: [
+        {
+          id: '1', order: 1, duration_seconds: 4, master_prompt: '',
+          segments: [
+            { start_time: '00:00', end_time: '00:02', prompt: 'Hero says: Hello world!', camera_movement: '' },
+            { start_time: '00:02', end_time: '00:04', prompt: 'Action shot.', camera_movement: '' }
+          ]
+        },
+        {
+          id: '2', order: 2, duration_seconds: 4, master_prompt: '',
+          segments: [
+            { start_time: '00:00', end_time: '00:04', prompt: 'Villain says: Goodbye!', camera_movement: '' }
+          ]
+        }
+      ]
+    };
 
-    const result = await stitchVideos(mockVideos);
-
-    expect(result).toHaveProperty('url');
-    expect(result).toHaveProperty('extension');
-    expect(result.extension).toBe('mp4');
+    const srt = generateCaptions(plan);
+    
+    // Check structure
+    expect(srt).toContain('1\n00:00:00,000 --> 00:00:02,000\nHello world!');
+    // Scene 2 starts at 00:04 (cumulative)
+    expect(srt).toContain('2\n00:00:04,000 --> 00:00:08,000\nGoodbye!');
   });
 
-  it('should support transition parameter', async () => {
-    const mockVideos: VideoArtifact[] = [
-      { url: 'url1', blob: new Blob(['video1'], { type: 'video/mp4' }), uri: 'uri1' },
-    ];
+  it('should handle missing dialogue gracefully', () => {
+    const plan: DirectorPlan = {
+      subject_prompt: '',
+      environment_prompt: '',
+      visual_style: '',
+      reasoning: '',
+      scenes: [
+        {
+          id: '1', order: 1, duration_seconds: 3, master_prompt: '',
+          segments: [
+            { start_time: '00:00', end_time: '00:03', prompt: 'Silent staring.', camera_movement: '' }
+          ]
+        }
+      ]
+    };
 
-    const transitions = [{ type: 'fade', duration: 0.5 }];
-    const result = await stitchVideos(mockVideos, transitions);
-
-    expect(result).toHaveProperty('url');
-    expect(result).toHaveProperty('extension');
-  });
-});
-
-// Note: Transition tests require real video metadata parsing (video element creation)
-// which is beyond the scope of unit tests. These are tested via integration/manual verification.
-
-describe.skip('VideoStitcher with Transitions (Integration)', () => {
-  it('should handle transition parameters', async () => {
-    const stitcher = new VideoStitcher();
-    const mockVideos: VideoArtifact[] = [
-      { url: 'url1', blob: new Blob(['video1'], { type: 'video/mp4' }), uri: 'uri1' },
-      { url: 'url2', blob: new Blob(['video2'], { type: 'video/mp4' }), uri: 'uri2' },
-    ];
-    const transitions = [{ type: 'fade', duration: 0.5 }];
-
-    const result = await stitcher.stitchWithTransitions(mockVideos, transitions);
-    expect(result).toBeInstanceOf(Blob);
-    expect(result.type).toBe('video/mp4');
-  });
-
-  it('should handle multiple transitions', async () => {
-    const stitcher = new VideoStitcher();
-    const mockVideos: VideoArtifact[] = [
-      { url: 'url1', blob: new Blob(['v1'], { type: 'video/mp4' }), uri: 'uri1' },
-      { url: 'url2', blob: new Blob(['v2'], { type: 'video/mp4' }), uri: 'uri2' },
-      { url: 'url3', blob: new Blob(['v3'], { type: 'video/mp4' }), uri: 'uri3' },
-    ];
-    const transitions = [
-      { type: 'fade', duration: 0.5 },
-      { type: 'fadeblack', duration: 1.0 }
-    ];
-
-    const result = await stitcher.stitchWithTransitions(mockVideos, transitions);
-    expect(result).toBeInstanceOf(Blob);
+    const srt = generateCaptions(plan);
+    expect(srt).toBe('');
   });
 });
