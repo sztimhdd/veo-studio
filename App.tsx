@@ -228,6 +228,59 @@ const StudioContent: React.FC<{
     }
   };
 
+  const handleRefineAll = async () => {
+    if (!state.artifacts.plan || !state.artifacts.assets || !state.artifacts.shots) return;
+    
+    const totalShots = state.artifacts.shots.length;
+    dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Starting batch refinement for ${totalShots} shots...`, phase: 'REFINING' } });
+    
+    for (let i = 0; i < totalShots; i++) {
+      // Skip if already refined
+      if (state.artifacts.shots[i]?.selectedKeyframe) {
+        dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Scene ${i + 1}: Already mastered, skipping.`, phase: 'REFINING' } });
+        continue;
+      }
+      
+      dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Mastering Scene ${i + 1}/${totalShots} (4K)...`, phase: 'REFINING' } });
+      
+      try {
+        dispatch({ 
+          type: 'START_REFINEMENT', 
+          payload: { video: state.artifacts.shots[i] } 
+        });
+        
+        const refinedShot = await runRefinementPhase(
+          state.artifacts.shots[i],
+          state.artifacts.plan,
+          state.artifacts.assets
+        );
+        
+        dispatch({ 
+          type: 'UPDATE_SHOT', 
+          payload: { 
+            index: i, 
+            shot: refinedShot
+          } 
+        });
+        
+        dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Scene ${i + 1} mastered. Score: ${((refinedShot.consistencyScore || 0) * 100).toFixed(1)}%`, phase: 'COMPLETE' } });
+        
+      } catch (e: any) {
+        console.error(e);
+        dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Scene ${i + 1} failed: ${e.message}`, phase: 'ERROR' } });
+      }
+      
+      // Throttle between shots to respect quota limits
+      if (i < totalShots - 1) {
+        dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Cooldown before next shot (10s)...`, phase: 'REFINING' } });
+        await new Promise(resolve => setTimeout(resolve, 10000));
+      }
+    }
+    
+    dispatch({ type: 'SET_PHASE', payload: 'COMPLETE' });
+    dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Batch mastering complete! All scenes ready for export.`, phase: 'COMPLETE' } });
+  };
+
   return (
     <div className="flex flex-col h-full w-full max-w-7xl mx-auto px-4 py-6">
       {!isStarted ? (
@@ -307,7 +360,8 @@ const StudioContent: React.FC<{
           </div>
           <PipelineVisualizer 
             onRegenerate={handleRegenerateScene} 
-            onRefine={handleRefineShot} 
+            onRefine={handleRefineShot}
+            onRefineAll={handleRefineAll}
           />
         </div>
       )}

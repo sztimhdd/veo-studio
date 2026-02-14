@@ -5,18 +5,20 @@
 */
 import React, { useEffect, useRef, useState } from 'react';
 import { useProduction } from '../context/ProductionContext';
-import { ArrowRightIcon, SparklesIcon, ChevronDownIcon, TvIcon, VideoIcon, FileImageIcon, FilmIcon, PlayIcon, CheckCircleIcon, RefreshCwIcon, MessageSquareIcon } from 'lucide-react';
+import { ArrowRightIcon, SparklesIcon, ChevronDownIcon, TvIcon, VideoIcon, FileImageIcon, FilmIcon, PlayIcon, CheckCircleIcon, RefreshCwIcon, MessageSquareIcon, Wand2Icon } from 'lucide-react';
 
 interface PipelineVisualizerProps {
     onRegenerate?: (index: number, feedback: string) => Promise<void>;
     onRefine?: (index: number) => Promise<void>;
+    onRefineAll?: () => Promise<void>;
 }
 
-const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate, onRefine }) => {
+const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate, onRefine, onRefineAll }) => {
     const { state } = useProduction();
     const logsEndRef = useRef<HTMLDivElement>(null);
     const [regeneratingIndices, setRegeneratingIndices] = useState<Set<number>>(new Set());
     const [refiningIndices, setRefiningIndices] = useState<Set<number>>(new Set());
+    const [isRefiningAll, setIsRefiningAll] = useState(false);
     const [feedbackInputs, setFeedbackInputs] = useState<Record<number, string>>({});
     const [showFeedbackFor, setShowFeedbackFor] = useState<number | null>(null);
 
@@ -91,6 +93,31 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate, o
                     </div>
                     {state.phase === 'COMPLETE' && (
                         <div className="flex gap-2">
+                            {/* Master All Button - Only show if not all shots are refined */}
+                            {onRefineAll && state.artifacts.shots?.some(s => !s.selectedKeyframe) && (
+                                <button
+                                    onClick={async () => {
+                                        setIsRefiningAll(true);
+                                        try {
+                                            await onRefineAll();
+                                        } finally {
+                                            setIsRefiningAll(false);
+                                        }
+                                    }}
+                                    disabled={isRefiningAll}
+                                    className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-full shadow-lg transition-all flex items-center gap-2 disabled:opacity-50">
+                                    {isRefiningAll ? (
+                                        <>
+                                            <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                            Mastering All...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <SparklesIcon className="w-3 h-3" /> Master All (4K)
+                                        </>
+                                    )}
+                                </button>
+                            )}
                             <button
                                 onClick={async () => {
                                     console.log('[PipelineVisualizer] Export button clicked.');
