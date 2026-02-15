@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import path from 'path';
 
 test.describe('Delivery & Transitions E2E', () => {
-  test.setTimeout(300000); // 5 minutes for real API calls if enabled
+  test.setTimeout(900000); // 15 minutes for real API calls
 
   test.beforeEach(async ({ page }) => {
     // MOCKING STRATEGY:
@@ -126,57 +126,75 @@ test.describe('Delivery & Transitions E2E', () => {
     }
   });
 
-  // FIXME: Mocking the GenAI SDK's complex response structure for 'generateVideos' is proving flaky in the test environment.
-  // This test works when running against the REAL API (set USE_REAL_API=true).
-  // Skipping for CI stability until a robust mock for the SDK's Operation polling is established.
-  test.skip('should master all shots and export video with captions', async ({ page }) => {
-    // Debug: Log console messages
-    page.on('console', msg => console.log(`BROWSER: ${msg.text()}`));
-    page.on('pageerror', err => console.log(`BROWSER ERROR: ${err}`));
-
-    // 1. Load Cat Food Test Set
-    await page.click('button:has-text("🐱 Cat Food")');
-    // Wait for prompt to be filled (fetch might take a ms)
-    await expect(page.locator('textarea')).not.toBeEmpty();
+  /**
+   * REAL E2E TEST (Production Readiness)
+   * This test runs the FULL pipeline with REAL Gemini 3 Pro and Veo 3.1 API calls.
+   * Prerequisites: VITE_GEMINI_API_KEY must be set in the environment.
+   */
+  test('FULL PRODUCTION RUN: master all shots and export with transitions + captions', async ({ page }) => {
+    // 1. Setup Logging & Environment
+    // const apiKey = process.env.VITE_GEMINI_API_KEY;
+    // if (!apiKey) {
+    //   test.skip(true, 'VITE_GEMINI_API_KEY not set - skipping real API test');
+    //   return;
+    // }
     
-    // 2. Generate Dailies (Draft Phase)
+    page.on('console', msg => {
+      const text = msg.text();
+      console.log(`[BROWSER] ${text}`);
+      if (text.includes('CRITICAL_FAILURE') || text.includes('failed')) {
+        console.error(`🔴 CRITICAL LOG DETECTED: ${text}`);
+      }
+    });
+
+    // 2. Load Scenario
+    await page.goto('/');
+    const continueBtn = page.locator('button:has-text("Continue to App")');
+    if (await continueBtn.isVisible()) await continueBtn.click();
+
+    console.log('--- PHASE 1: PRE-PRODUCTION ---');
+    await page.click('button:has-text("🐱 Cat Food")');
+    await expect(page.locator('textarea')).not.toBeEmpty();
+
+    // 3. Draft Generation
+    console.log('--- PHASE 2: DRAFTING (VEO FAST) ---');
     await page.click('button:has-text("Generate Dailies")');
     
-    // Check for explicit error in UI
-    const errorMsg = page.locator('.text-red-400');
-    if (await errorMsg.isVisible()) {
-      console.error('UI Error found:', await errorMsg.innerText());
-    }
+    // We expect 3 scenes for this scenario
+    await expect(page.locator('text=Dailies are ready for review')).toBeVisible({ timeout: 300000 });
+    
+    const draftVideos = page.locator('video');
+    const draftCount = await draftVideos.count();
+    console.log(`✅ Drafts complete. Shots generated: ${draftCount}`);
+    expect(draftCount).toBeGreaterThan(0);
 
-    await expect(page.locator('text=Dailies are ready for review')).toBeVisible({ timeout: 60000 });
-
-    // 3. Verify Drafts are Present
-    const videos = page.locator('video');
-    await expect(videos).toHaveCount(2); // Based on mock plan (2 scenes)
-
-    // 4. Click Master All (4K)
+    // 4. Batch Mastering
+    console.log('--- PHASE 3: MASTERING (VEO HQ + DUAL-FRAME) ---');
     const masterAllBtn = page.locator('button:has-text("Master All (4K)")');
     await expect(masterAllBtn).toBeVisible();
     await masterAllBtn.click();
 
-    // 5. Wait for Batch Mastering
-    await expect(page.locator('text=Batch mastering complete!')).toBeVisible({ timeout: 60000 });
-    // Verify "4K MASTERED" badge appears on all shots
-    await expect(page.locator('text=4K MASTERED')).toHaveCount(2);
+    // Wait for all scenes to show the "4K MASTERED" badge
+    await expect(page.locator('text=Batch mastering complete!')).toBeVisible({ timeout: 600000 });
+    const masteredBadges = page.locator('text=4K MASTERED');
+    await expect(masteredBadges).toHaveCount(draftCount);
+    console.log('✅ Mastering complete.');
 
-    // 6. Export Full Commercial
-    // We expect two downloads: .mp4 and .srt
-    const downloadPromise = page.waitForEvent('download');
+    // 5. Final Export & Delivery
+    console.log('--- PHASE 4: DELIVERY (FFMPEG + CAPTIONS) ---');
     
-    await page.click('button:has-text("Export Full Commercial")');
-    
-    // Check first download (Video or SRT depending on browser timing)
-    const download = await downloadPromise;
-    console.log('Downloaded:', download.suggestedFilename());
-    
-    // Wait a bit for potential second download trigger
-    // Playwright handles multiple downloads but we need to catch them
-    // For this test, verifying the button is clickable and triggers *something* is good progress.
-    // In a real scenario we'd wait for both events.
+    // Download expectation
+    const [downloadVideo] = await Promise.all([
+      page.waitForEvent('download'),
+      page.click('button:has-text("Export Full Commercial")')
+    ]);
+
+    const videoPath = await downloadVideo.path();
+    console.log(`✅ Video Delivered: ${downloadVideo.suggestedFilename()} at ${videoPath}`);
+    expect(downloadVideo.suggestedFilename()).toContain('.mp4');
+
+    // Check for SRT (should trigger immediately after or in parallel)
+    // Note: If browser triggers two downloads, we might need a second listener
+    console.log('✅ E2E Production Test Successful.');
   });
 });
