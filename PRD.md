@@ -13,22 +13,25 @@ Moving beyond simple generation, it acts as an **End-to-End Virtual Production S
 We implement a 6-phase DAG (Directed Acyclic Graph) architecture that integrates planning, execution, and critique.
 
 ### 3.1. The Agentic Workflow
-1.  **Phase 0: Intent & Memory:** Analyzes user requirements and brand guidelines. Maintains long-term memory (User Prefs, Character Banks).
-2.  **Phase 1: Structured Pre-Production:** 
-    *   **Director Agent:** Generates structured JSON scripts and shot tables.
-    *   **Cost Estimator:** Provides budget transparency and "Early Exit" arbitration before costly rendering.
-3.  **Phase 2: Execution Cluster:** 
-    *   **Material Generator:** Creates character turnaround and environment reference sheets.
+1.  **Phase 0: Intent & Memory:** (Planned) Analyzes user requirements and brand guidelines. Maintains long-term memory (User Prefs, Character Banks).
+2.  **Phase 1: Structured Pre-Production:** ✅ Complete.
+    *   **Director Agent:** Generates structured JSON scripts and shot table.
+    *   **Cost Estimator:** (Planned) Provides budget transparency and "Early Exit" arbitration before costly rendering.
+3.  **Phase 2: Execution Cluster:** ✅ Complete.
+    *   **Material Generator (Artist):** Creates character turnaround and environment reference sheets.
     *   **Prompt Engineer:** Optimizes prompts for semantic alignment.
-    *   **Draft Generator:** Produces low-resolution 4-6 variants for review.
-4.  **Phase 3: Continuity Supervision:** 
-    *   **Critic Agent:** Scores drafts for temporal consistency and semantic alignment.
-    *   **Motion Lock:** User or agent selection of the "Locked Skeleton" (the base motion).
-5.  **Phase 4: High-Res Refinement:** 
-    *   Intelligent keyframe extraction followed by High-Res Redrawing (4K) to anchor visual quality.
-    *   **Feature Consistency Checker:** Prevents style drift using similarity mapping.
-6.  **Phase 5: Master Rendering:** Uses Veo 3.1 with multi-modal conditions (locked motion + high-res anchors + optimized prompts).
-7.  **Phase 6: QA & Feedback Loops:** 
+    *   **Draft Generator (Engineer):** Produces low-resolution drafts for review using Veo 3.1 Fast.
+4.  **Phase 3: Continuity Supervision:** (Partial)
+    *   **Critic Agent:** (Planned) Scores drafts for temporal consistency and semantic alignment.
+    *   **Motion Lock:** User selects best draft from generated variants.
+5.  **Phase 4: High-Res Refinement:** ✅ Complete.
+    *   Intelligent keyframe extraction (Start + End) followed by High-Res Redrawing (4K) to anchor visual quality.
+    *   **Dual-Frame Mastering:** Uses Veo 3.1 with startFrame and lastFrame for smoother temporal boundaries.
+    *   **Feature Consistency Checker:** Prevents style drift using perceptual hashing (imagehash-web).
+6.  **Phase 5: Master Rendering:** ✅ Complete.
+    *   Uses Veo 3.1 with multi-modal conditions (locked motion + high-res anchors + optimized prompts).
+    *   **Stitching & Delivery:** Client-side FFmpeg.wasm concatenation with xfade transitions and SRT captions.
+7.  **Phase 6: QA & Feedback Loops:** (Planned)
     *   Final quality gate with automated "Local Fix" (redraw specified frames) or "Global Fix" (re-scripting) capabilities.
 
 ## 4. Key Features

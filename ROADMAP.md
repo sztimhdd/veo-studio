@@ -50,7 +50,7 @@ Based on the architecture defined in `references/proposed_arch_feb11.mermaid`, h
 ---
 
 ## 🔴 Phase 5: Master Rendering & Delivery (The "Production" Upgrade)
-**Status:** In Progress.
+**Status:** ✅ Complete.
 
 - [x] **Combiner Agent (Logic integrated in Mastering)**
     - Assembles `VeoPayload` (Upscaled Anchors + Prompt + Motion).
@@ -58,10 +58,10 @@ Based on the architecture defined in `references/proposed_arch_feb11.mermaid`, h
     - Connected `VeoRender` (Veo 3.1) for final video synthesis.
 - [ ] **Audio Generation**
     - (Optional) Add `ComposerAgent` for audio track generation.
-- [ ] **Stitching & Delivery**
+- [x] **Stitching & Delivery**
     - [x] Basic concatenation implemented.
-    - [ ] **Director-Driven Transitions**: Enhance StitchService to use FFmpeg xfade based on `TransitionSpec` from Director.
-    - [ ] **Deliver Module**: Format final output (Video + Captions + Report).
+    - [x] **Director-Driven Transitions**: Enhance StitchService to use FFmpeg xfade based on `TransitionSpec` from Director.
+    - [x] **Deliver Module**: Format final output (Video + Captions + Report).
 
 ---
 
@@ -80,11 +80,14 @@ Based on the architecture defined in `references/proposed_arch_feb11.mermaid`, h
 ## 📅 PRIORITIZED NEXT STEPS
 
 ### 1. Feature 1: Director-Driven Shot Transitions
-**Status:** Research Complete. **Ready to Implement.**
+**Status:** ✅ Complete.
 
-- Update `types.ts` - Add `TransitionSpec` (done).
-- Modify Director Agent - Output transition hints in Script_JSON.
-- Enhance StitchService - Parse transitions and apply FFmpeg xfade with audio handling.
+- [x] Updated `types.ts` - Add `TransitionSpec`.
+- [x] Modify Director Agent - Output transition hints in Script_JSON.
+- [x] Enhance StitchService - Parse transitions and apply FFmpeg xfade with audio handling.
+- [x] Added "Master All (4K)" batch button with throttling.
+- [x] Added Captions Generation (`generateCaptions`).
+- [x] Added E2E Testing script (`run-e2e-test.sh`).
 
 ### 2. Feature 3: Per-Shot vs Sequence Upscaling Decision
 **Status:** Research Needed.
@@ -93,9 +96,10 @@ Based on the architecture defined in `references/proposed_arch_feb11.mermaid`, h
 - **Option B**: Sequence Upscaling (Efficient Quota).
 
 ### 3. Feature 4: Stitching & Delivery (Refinement)
-- Add FFmpeg xfade transitions.
-- Add Captions generation (using Director's script).
-- Add "Report" generation (consistency scores, artifacts used).
+- [x] Add FFmpeg xfade transitions.
+- [x] Add Captions generation (using Director's script).
+- [x] Add "Report" generation (consistency scores, artifacts used).
+- [x] **E2E Testing**: Implemented real-API tests with Playwright.
 
 ### 4. Backlog
 - **Memory System (Phase 0)**: `GlobalKB`, `TaskContext`, `UserPref`.
