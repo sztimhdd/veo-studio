@@ -72,33 +72,88 @@ interface EvalReport {
 
 ### 4.2. Testing Framework
 
-**Current Status:** Testing framework is fully operational with **Vitest** + **@testing-library/react**.
+**Current Status:** Testing framework is fully operational with **Vitest** + **@testing-library/react** + **Playwright**.
 
 - **Framework:** Vitest (native Vite integration, fast execution)
 - **UI Testing:** @testing-library/react + @testing-library/jest-dom
 - **Environment:** jsdom for browser simulation
+- **E2E Testing:** Playwright (Real Browser, Real APIs)
 
 **Test Commands:**
 ```bash
+# Unit Tests
 npm run test        # Run tests in watch mode
 npm run test:run    # Run tests once (CI mode)
 npx vitest <file>   # Run single test file
+
+# E2E Tests (Real APIs)
+./run-e2e-test.sh  # Run full production pipeline test
 ```
 
-**Current Test Coverage:**
-*   **ProductionContext (19 tests):** Full reducer coverage including all actions (START_PIPELINE, SET_PHASE, UPDATE_ARTIFACTS, UPDATE_SHOT, ADD_LOG, SET_ERROR, RESET)
-*   **PipelineService (9 tests):** Quota management utilities (getRetryDelay, waitForQuota) with timer mocking
+---
 
-**Testing Architecture:**
-*   **Setup:** `test/setup.ts` - Global mocks for Google GenAI SDK, automatic cleanup
-*   **Mocks:** `__mocks__/@google/genai.ts` - Manual mock to prevent API costs
-*   **Pattern:** Pure utility functions exported for unit testing; external dependencies mocked via `vi.mock()`
+### 4.3. E2E Testing (Production Validation)
 
-**Best Practices:**
-*   Export pure utility functions from services for unit testing
-*   Use `vi.useFakeTimers()` for time-based tests
-*   Mock `@google/genai` to avoid API costs during testing
-*   Test files: `*.test.ts` or `*.test.tsx` alongside source files
+The project includes a **repeatable End-to-End (E2E) testing suite** that validates the complete production pipeline using **REAL Google AI APIs** (Gemini 3 Pro + Veo 3.1).
+
+#### Purpose
+E2E tests validate that the system works in a production-like environment, catching issues that unit tests miss:
+- Real API latency and rate limiting
+- Browser rendering of video elements
+- FFmpeg stitching in the browser
+- File download triggers
+
+#### Prerequisites
+1.  **API Key**: Set `VITE_GEMINI_API_KEY` in your environment.
+2.  **Dev Server**: Ensure the app is running (`npm run dev`).
+3.  **Playwright**: Install browsers (`npx playwright install chromium`).
+
+#### Running E2E Tests
+
+**Option 1: Shell Script (Recommended)**
+```bash
+./run-e2e-test.sh
+```
+This script automatically checks prerequisites and runs the test with a 20-minute timeout.
+
+**Option 2: Manual**
+```bash
+export VITE_GEMINI_API_KEY="your-key-here"
+export USE_REAL_API=true
+npx playwright test tests/e2e/delivery-and-transitions.spec.ts \
+    --project=chromium \
+    --timeout=1200000
+```
+
+#### What the E2E Test Validates
+
+The test runs through **4 Phases**:
+
+| Phase | Component | Validation Point |
+|-------|-----------|-----------------|
+| **1. Pre-Production** | Director + Artist | "Production bible complete" log |
+| **2. Drafting** | Veo 3.1 Fast | "Dailies are ready for review" visible |
+| **3. Mastering** | Dual-Frame + Veo HQ | "4K MASTERED" badge on all shots |
+| **4. Delivery** | FFmpeg + Captions | `.mp4` and `.srt` files downloaded |
+
+#### Expected Duration
+- **Total:** 12-20 minutes (depending on API quota and complexity)
+- **Timeout:** Set to 20 minutes (1200000ms) to accommodate 4K video generation.
+
+#### Troubleshooting E2E Failures
+*   **Timeout:** Increase `--timeout` if API is slow.
+*   **API Errors:** Check logs for `429` (quota) or `raiMediaFilteredReasons` (safety filter).
+*   **Network:** Ensure localhost:3000 is accessible.
+
+#### Test Artifacts
+- **Location:** `tests/e2e/delivery-and-transitions.spec.ts`
+- **Documentation:** `tests/E2E_README.md`
+
+#### Best Practices for E2E Testing
+*   **Always use REAL APIs** for E2E. Mocks hide real-world issues.
+*   **Log extensively**: The test captures all browser console output.
+*   **Isolate tests**: Each test should be independent (setup its own state).
+*   **Handle latency**: Use Playwright's `waitFor` logic, not fixed sleeps.
 
 ## 5. Infrastructure & Deployment (CI/CD)
 
