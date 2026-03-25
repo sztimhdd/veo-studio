@@ -2,8 +2,10 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
-# Add build tools for native dependencies (e.g. canvas required by imagehash-web)
-RUN apk add --no-cache python3 make g++ build-base cairo-dev pango-dev libjpeg-turbo-dev giflib-dev librsvg-dev
+WORKDIR /app
+
+# Add base build tools for any transitive native deps
+RUN apk add --no-cache python3 make g++
 
 COPY package*.json ./
 RUN npm ci

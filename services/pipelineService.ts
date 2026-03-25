@@ -65,34 +65,47 @@ export function getRetryDelay(attempt: number): number {
   return Math.min(Math.max(baseDelay + jitter, 500), 60000); // Clamp between 0.5s and 60s
 }
 
-import imagehash from 'imagehash-web';
-
-// Destructure functions from the default export array
-// [ahash, dhash, phash, whash, cropResistantHash, ImageHash]
-// Safely handle imagehash-web imports which can be flaky in ESM/Vite
-const getHashes = () => {
-  const lib = imagehash as any;
-  if (Array.isArray(lib)) return lib;
-  if (lib?.default && Array.isArray(lib.default)) return lib.default;
-  
-  // Fallback to window globals if the module system failed us (common in some WSL/Vite setups)
-  if (typeof window !== 'undefined' && (window as any).ahash) {
-    return [
-      (window as any).ahash,
-      (window as any).dhash,
-      (window as any).phash,
-      (window as any).whash,
-      (window as any).cropResistantHash,
-      (window as any).ImageHash
-    ];
+// Pure TypeScript dHash (Difference Hash) implementation to replace unstable native dependencies
+class ImageHash {
+  constructor(public hash: string) {}
+  hammingDistance(other: ImageHash): number {
+    let dist = 0;
+    const h1 = this.hash;
+    const h2 = other.hash;
+    const len = Math.min(h1.length, h2.length);
+    for (let i = 0; i < len; i++) {
+       if (h1[i] !== h2[i]) dist++;
+    }
+    return dist + Math.abs(h1.length - h2.length);
   }
-  
-  // Last resort: mock-like empty functions to prevent top-level crash
-  const noop = () => ({ hammingDistance: () => 0 });
-  return [noop, noop, noop, noop, noop, { fromHexString: () => null }];
-};
+}
 
-const [ahash, dhash, phash, whash, cropResistantHash, ImageHash] = getHashes();
+async function phash(img: CanvasImageSource, size: number = 8): Promise<ImageHash> {
+  const canvas = document.createElement('canvas');
+  canvas.width = size + 1;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  ctx.drawImage(img, 0, 0, size + 1, size);
+  const data = ctx.getImageData(0, 0, size + 1, size).data;
+  
+  let hash = "";
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const idx = (y * (size + 1) + x) * 4;
+      // Luma calculation: 0.299R + 0.587G + 0.114B
+      const left = data[idx] * 0.299 + data[idx+1] * 0.587 + data[idx+2] * 0.114;
+      const right = data[idx+4] * 0.299 + data[idx+5] * 0.587 + data[idx+6] * 0.114;
+      hash += left < right ? "1" : "0";
+    }
+  }
+  return new ImageHash(hash);
+}
+
+// Mocks for unused hashing functions originally from imagehash-web
+const ahash = phash;
+const dhash = phash;
+const whash = phash;
+const cropResistantHash = phash;
 
 // --- UTILITIES ---
 
