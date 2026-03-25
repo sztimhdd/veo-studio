@@ -54,9 +54,55 @@ The project follows a **flat directory structure** (no `src/` folder).
     - Setup file: `test/setup.ts` - Contains global mocks (Google GenAI, jsdom cleanup)
     - Mock location: `__mocks__/@google/genai.ts` - Manual mock for AI SDK
 
+<<<<<<< HEAD
 - **Current Test Coverage:**
     - `context/ProductionContext.test.tsx` - 19 tests covering all reducer actions and hook behavior
     - `services/pipelineService.test.ts` - 9 tests for `getRetryDelay` and `waitForQuota` utilities
+=======
+## 4. Logical Structure
+- `src/services/pipelineService.ts`: The core orchestrator (Director, Artist, Engineer).
+- `src/services/criticService.ts`: AI Critic Agent (Phase 3 - Continuity Supervision).
+- `src/types.ts`: Central source of truth for all interfaces.
+- `src/context/ProductionContext.tsx`: Global state for the DAG phases.
+- `src/components/PipelineVisualizer.tsx`: UI for human critique and motion lock.
+
+## 4.1. The 6-Phase Architecture
+
+### Phase 0: Intent & Memory
+- **IntentParser**: Analyzes user requirements
+- **Memory System**: Global KB, Task Context, User Preferences
+
+### Phase 1: Structured Pre-Production
+- **Director Agent**: Generates script JSON and shot tables
+- **Cost Estimator**: Budget transparency (future)
+
+### Phase 2: Execution Cluster
+- **Artist Agent**: Generates turnaround sheets (Nano Banana Pro)
+- **Engineer Agent**: Generates video drafts (Veo 3.1)
+- **QuotaManager**: Enforces RPM limits per model type
+
+### Phase 3: Continuity Supervision ⚡ NEW
+- **AI Critic Agent** (`runContinuitySupervisor`):
+  - Evaluates each shot for temporal consistency, semantic alignment, technical quality
+  - Calculates cross-shot character fidelity
+  - Generates `EvalReport` with scores (0-10) and flaw detection
+  - **Threshold**: Overall score >= 8.5 for auto-approval
+- **Motion Lock**: User or AI can lock the "skeleton" (base motion)
+- **Human Critic**: Users can add feedback and trigger regeneration
+
+### Phase 4: High-Res Refinement
+- **Keyframe Extraction**: Intelligent frame selection
+- **Consistency Checker**: Similarity validation
+
+### Phase 5: Master Rendering
+- **Combiner Agent**: Assembles final Veo 3.1 payload
+- **Quality Gate**: Final approval before delivery
+
+### Phase 6: QA & Feedback Loops
+- **Final Inspector**: Automated QA scoring
+- **Local Fix**: Redraw specific frames
+- **Global Fix**: Re-scripting via feedback to Director
+>>>>>>> feature/ai-critic-phase3
 
 - **Testing Best Practices:**
     - Export pure utility functions from services for unit testing (e.g., `export function getRetryDelay`)

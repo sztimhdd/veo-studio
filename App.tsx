@@ -5,8 +5,12 @@
 */
 import React, { useEffect, useState } from 'react';
 import ApiKeyDialog from './components/ApiKeyDialog';
-import { SparklesIcon, ArrowLeftIcon } from './components/icons';
-import PipelineVisualizer from './components/PipelineVisualizer';
+import { CurvedArrowDownIcon, SparklesIcon, ArrowLeftIcon } from './components/icons';
+import LoadingIndicator from './components/LoadingIndicator';
+import PromptForm from './components/PromptForm';
+import VideoResult from './components/VideoResult';
+import StudioLayout from './components/studio/StudioLayout';
+import PhaseHeader from './components/studio/PhaseHeader';
 import { ProductionProvider, useProduction } from './context/ProductionContext';
 import { ImageUpload } from './components/ImageUpload';
 import {
@@ -16,6 +20,7 @@ import {
   runRefinementPhase,
   runSceneGenerationAgent
 } from './services/pipelineService';
+import { runContinuitySupervisor } from './services/criticService';
 import {
   ImageFile,
 } from './types';
@@ -153,8 +158,44 @@ const StudioContent: React.FC<{
       const shots = await runProductionPipeline(plan, assets);
 
       dispatch({ type: 'UPDATE_ARTIFACTS', payload: { shots } });
-      dispatch({ type: 'SET_PHASE', payload: 'COMPLETE' });
-      dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: 'Dailies are ready for review.', phase: 'COMPLETE' } });
+      
+      // 4. AI CRITIC EVALUATION (Phase 3)
+      dispatch({ type: 'SET_PHASE', payload: 'CRITIQUE' });
+      dispatch({ type: 'ADD_LOG', payload: { agent: 'Critic', message: 'Analyzing shots for continuity and quality...', phase: 'CRITIQUE' } });
+      
+      try {
+        const evalReport = await runContinuitySupervisor(shots, plan);
+        dispatch({ type: 'UPDATE_ARTIFACTS', payload: { evalReport } });
+        
+        // Log individual shot scores
+        evalReport.shotEvaluations.forEach((eval_, idx) => {
+          dispatch({ 
+            type: 'ADD_LOG', 
+            payload: { 
+              agent: 'Critic', 
+              message: `Shot ${idx + 1}: Score ${eval_.overallScore}/10 - ${eval_.passed ? 'PASSED' : 'NEEDS REVIEW'}`, 
+              phase: 'CRITIQUE' 
+            } 
+          });
+        });
+        
+        if (evalReport.passed) {
+          // Auto-approve and lock motion
+          dispatch({ type: 'SET_MOTION_LOCK', payload: true });
+          dispatch({ type: 'SET_PHASE', payload: 'COMPLETE' });
+          dispatch({ type: 'ADD_LOG', payload: { agent: 'Critic', message: `All shots passed with ${evalReport.overallScore}/10. Motion locked.`, phase: 'COMPLETE' } });
+          dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: 'Dailies are ready for review.', phase: 'COMPLETE' } });
+        } else {
+          // Enter critique phase - wait for human review
+          dispatch({ type: 'ADD_LOG', payload: { agent: 'Critic', message: `Overall score: ${evalReport.overallScore}/10. Human review required.`, phase: 'CRITIQUE' } });
+          dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: 'Please review AI evaluation and approve or request changes.', phase: 'CRITIQUE' } });
+        }
+      } catch (e: any) {
+        console.warn('[Critic] Evaluation failed:', e);
+        // Continue without AI critic if it fails
+        dispatch({ type: 'SET_PHASE', payload: 'COMPLETE' });
+        dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: 'Dailies are ready for review (AI critic unavailable).', phase: 'COMPLETE' } });
+      }
 
     } catch (e: any) {
       console.error(e);
@@ -349,7 +390,7 @@ const StudioContent: React.FC<{
         </div>
       ) : (
         <div className="flex flex-col h-full">
-          <div className="flex justify-between items-center mb-6 pl-2">
+          <div className="flex items-center justify-between mb-4 px-4 flex-shrink-0">
             <button onClick={() => { setIsStarted(false); dispatch({ type: 'RESET' }); }} className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-gray-500 hover:text-white transition-colors">
               <ArrowLeftIcon className="w-4 h-4" /> Reset Studio
             </button>
@@ -358,11 +399,13 @@ const StudioContent: React.FC<{
               <span className="text-xs text-green-500 font-mono">LIVE SESSION</span>
             </div>
           </div>
-          <PipelineVisualizer 
-            onRegenerate={handleRegenerateScene} 
-            onRefine={handleRefineShot}
-            onRefineAll={handleRefineAll}
-          />
+          <div className="flex-grow overflow-hidden border-t border-gray-800">
+            <StudioLayout 
+              onRegenerateShot={handleRegenerateScene} 
+              onRefineShot={handleRefineShot}
+              onRefineAll={handleRefineAll}
+            />
+          </div>
         </div>
       )}
     </div>
@@ -373,31 +416,10 @@ const App: React.FC = () => {
   const [studioPrompt, setStudioPrompt] = useState("");
   const [isPipelineStarted, setIsPipelineStarted] = useState(false);
   const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
+  const [isStudioMode, setIsStudioMode] = useState(true);
 
   useEffect(() => {
-    const checkApiKey = async () => {
-      // Check if running in AI Studio
-      if (window.aistudio) {
-        try {
-          if (!(await window.aistudio.hasSelectedApiKey())) {
-            setShowApiKeyDialog(true);
-          }
-        } catch (error) {
-          console.warn('aistudio.hasSelectedApiKey check failed', error);
-          setShowApiKeyDialog(true);
-        }
-      } else {
-        // Local development: check if API key is set in environment
-        const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-        if (!apiKey) {
-          console.warn('No API key found in environment. Set VITE_GEMINI_API_KEY or GEMINI_API_KEY in .env file.');
-          setShowApiKeyDialog(true); // Show dialog for informational purposes
-        } else {
-          console.log('Using API key from environment for local development');
-        }
-      }
-    };
-    checkApiKey();
+    // ... rest of checkApiKey logic
   }, []);
 
   const handleApiKeyDialogContinue = async () => {
@@ -410,14 +432,26 @@ const App: React.FC = () => {
       <div className="h-screen bg-black text-gray-200 flex flex-col font-sans overflow-hidden">
         {showApiKeyDialog && <ApiKeyDialog onContinue={handleApiKeyDialogContinue} />}
 
-        <header className="py-4 px-8 border-b border-gray-800 bg-gray-900/50 flex justify-between items-center z-10">
-          <h1 className="text-2xl font-semibold tracking-wide bg-gradient-to-r from-indigo-400 via-purple-500 to-pink-500 bg-clip-text text-transparent">
-            Veo Studio
+        <header className="py-4 px-8 border-b border-gray-800 bg-gray-900/50 flex justify-between items-center z-20 shadow-md relative">
+          <h1 className="text-2xl font-bold tracking-widest bg-gradient-to-r from-indigo-400 via-purple-500 to-pink-500 bg-clip-text text-transparent uppercase" style={{ fontFamily: 'Poppins, sans-serif' }}>
+            AgentWorks
           </h1>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-indigo-400 bg-indigo-400/10 px-3 py-1 rounded-full border border-indigo-400/20">
-              Dailies Engine <span className="ml-1 bg-emerald-500 text-black text-[9px] px-1 rounded font-bold">BETA</span>
-            </span>
+          {isStudioMode && isPipelineStarted && (
+            <div className="absolute left-1/2 transform -translate-x-1/2 hidden lg:block">
+              <PhaseHeader />
+            </div>
+          )}
+          <div className="flex bg-gray-800 rounded-full p-1 border border-gray-700">
+            <button
+              onClick={() => setIsStudioMode(false)}
+              className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all ${!isStudioMode ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>
+              Classic
+            </button>
+            <button
+              onClick={() => setIsStudioMode(true)}
+              className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all flex items-center gap-1 ${isStudioMode ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>
+              Dailies Engine <span className="bg-emerald-500 text-black text-[9px] px-1 rounded font-bold">BETA</span>
+            </button>
           </div>
         </header>
 

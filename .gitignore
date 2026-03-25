@@ -32,6 +32,9 @@ github-deployer-key.json
 # Testing
 test-results/
 playwright-report/
+blob-report/
+/playwright/.cache/
+/playwright/.auth/
 
 # Agent/Tooling
 .opencode/
@@ -44,3 +47,4 @@ resolved_config.json
 current_resolved_config.json
 skills/
 bin/
+

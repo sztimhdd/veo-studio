@@ -16,6 +16,7 @@ export type PipelinePhase =
   | 'PLANNING'      // Director Agent
   | 'ASSET_GEN'     // Material Agent
   | 'DRAFTING'      // Veo Fast
+  | 'CRITIQUE'      // AI Critic Evaluation (Phase 3)
   | 'REFINING'      // Frame Extraction + Gemini Pro Vision Upscale
   | 'RENDERING'     // Veo High Quality
   | 'COMPLETE'
@@ -40,7 +41,23 @@ export interface SceneParams {
   transition?: TransitionSpec; // Transition effect to next shot (null for last shot)
 }
 
-// Legacy: Keep for backward compatibility during migration
+export enum DirectorModel {
+  FLASH = 'gemini-2.0-flash',
+  PRO = 'gemini-2.5-pro-preview-03-25',
+}
+
+export enum VideoModel {
+  FAST = 'veo-3.1-fast-generate-preview',
+  HIGH = 'veo-3.1-generate-preview',
+}
+
+export interface ProjectOptions {
+  directorModel: DirectorModel;
+  videoModel: VideoModel;
+  resolution: '720p' | '1080p';
+  aspectRatio: '16:9' | '9:16';
+}
+
 export interface ShotParams {
   id: string;
   order: number;
@@ -82,7 +99,6 @@ export interface VideoArtifact {
   shotId?: string; // Link back to the shot params
   userFeedback?: string; // Human critique
   version?: number; // Take 1, 2, 3...
-  
   // New fields for Phase 4 (Refining)
   keyframes?: string[]; // Base64 strings of extracted frames
   consistencyScore?: number; // 0-1 score
@@ -97,6 +113,35 @@ export interface VideoArtifact {
       upscaled: string; // Base64
     };
   };
+  evaluation?: ShotEvaluation; // AI Critic evaluation results
+  motionLocked?: boolean; // Whether this shot's motion is locked
+}
+
+// --- AI CRITIC TYPES (Phase 3) ---
+
+export interface ShotEvaluation {
+  variantId: string;
+  temporalConsistencyScore: number; // 0-10
+  semanticAlignmentScore: number;   // 0-10
+  technicalQualityScore: number;    // 0-10
+  overallScore: number;             // Weighted average
+  flaws: Array<{
+    timestamp: number;
+    type: 'artifact' | 'drift' | 'glitch' | 'lighting' | 'audio';
+    description: string;
+  }>;
+  recommendations: string[];
+  passed: boolean; // true if overallScore >= 8.5
+}
+
+export interface EvalReport {
+  shotEvaluations: ShotEvaluation[];
+  temporalConsistencyScore: number; // Average across all shots
+  semanticAlignment: number;        // Average across all shots
+  characterFidelity: number;        // Cross-shot consistency
+  overallScore: number;
+  passed: boolean;
+
 }
 
 export interface ProductionArtifacts {
@@ -117,6 +162,8 @@ export interface ProductionArtifacts {
     };
   } | null;
   finalVideo: VideoArtifact | null;
+  evalReport: EvalReport | null; // AI Critic evaluation report (Phase 3)
+  motionLocked: boolean; // Whether motion is locked across all shots
 }
 
 
@@ -124,7 +171,7 @@ export interface LogEntry {
   timestamp: number;
   phase: PipelinePhase;
   message: string;
-  agent: 'Director' | 'Artist' | 'Engineer' | 'System';
+  agent: 'Director' | 'Artist' | 'Engineer' | 'Critic' | 'System';
 }
 
 export interface ProductionState {
@@ -132,4 +179,5 @@ export interface ProductionState {
   artifacts: ProductionArtifacts;
   logs: LogEntry[];
   error: string | null;
+  projectOptions: ProjectOptions;
 }

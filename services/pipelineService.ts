@@ -2,12 +2,29 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import { Type, Schema, VideoGenerationReferenceImage, VideoGenerationReferenceType } from '@google/genai';
-import { aiService } from './aiService';
+import { GoogleGenAI, Type, Schema, VideoGenerationReferenceImage, VideoGenerationReferenceType } from '@google/genai';
 import { AssetItem, DirectorPlan, SceneParams, ShotParams, VideoArtifact } from '../types';
+
 
 // --- QUOTA MANAGEMENT ---
 // Implements Token Bucket / Leaky Bucket style rate limiting based on User's verified Quotas.
+
+
+let genAI: any = null;
+export const getAI = () => {
+  if (genAI) return genAI;
+  const apiKey = (typeof window !== 'undefined' && (window as any).aistudio?.getSelectedApiKey()) || import.meta.env.VITE_GEMINI_API_KEY;
+  if (!apiKey) {
+    // Return a dummy object if key missing to prevent top-level crash, 
+    // real error will be thrown on first model call
+    return {
+      getGenerativeModel: () => ({ generateContent: () => { throw new Error("API Key not configured"); } }),
+      models: { generateContent: () => { throw new Error("API Key not configured"); } }
+    };
+  }
+  genAI = new GoogleGenAI(apiKey);
+  return genAI;
+};
 
 const QUOTAS = {
   VIDEO_GEN: {
@@ -420,7 +437,8 @@ export const runDirectorAgent = async (
   };
 
     await waitForQuota('TEXT_GEN'); // Director uses Gemini 3 Pro (Text)
-    const response = await aiService.client.models.generateContent({
+    const response = await getAI().models.generateContent({
+
     model: 'gemini-3-pro-preview',
     contents: `You are an expert Film Director and Cinematographer with complete creative control.
                Analyze the user's requirements and break down the narrative into a DYNAMIC scene structure for Veo 3.1 video generation.
@@ -624,7 +642,8 @@ CRITICAL RULES:
     console.log('[Artist] User provided character reference — extrapolating 3-view sheet...');
     
     await waitForQuota('IMAGE_GEN');
-    charResponse = await aiService.client.models.generateContent({
+    charResponse = await getAI().models.generateContent({
+
       model: ARTIST_MODEL,
       contents: [
         { text: `Using this reference photo of the character, ${charTurnaroundPrompt}` },
@@ -639,7 +658,8 @@ CRITICAL RULES:
     console.log('[Artist] No user reference — generating character from description...');
     
     await waitForQuota('IMAGE_GEN');
-    charResponse = await aiService.client.models.generateContent({
+    charResponse = await getAI().models.generateContent({
+
       model: ARTIST_MODEL,
       contents: charTurnaroundPrompt,
       config: {
@@ -700,7 +720,8 @@ CRITICAL RULES:
     console.log('[Artist] User provided environment reference — extrapolating reference sheet...');
     
     await waitForQuota('IMAGE_GEN');
-    envResponse = await aiService.client.models.generateContent({
+    envResponse = await getAI().models.generateContent({
+
       model: ARTIST_MODEL,
       contents: [
         { text: `Using this reference photo of the location, ${envTurnaroundPrompt}` },
@@ -714,7 +735,8 @@ CRITICAL RULES:
     console.log('[Artist] No user reference — generating environment from description...');
     
     await waitForQuota('IMAGE_GEN');
-    envResponse = await aiService.client.models.generateContent({
+    envResponse = await getAI().models.generateContent({
+
       model: ARTIST_MODEL,
       contents: envTurnaroundPrompt,
       config: {
@@ -870,7 +892,8 @@ export const runShotDraftingAgent = async (
 
       await waitForQuota('VIDEO_GEN');
       
-      let operation = await aiService.client.models.generateVideos({
+      let operation = await getAI().models.generateVideos({
+
         model: 'veo-3.1-fast-generate-preview',
         prompt: currentPrompt,
         config: {
@@ -885,7 +908,7 @@ export const runShotDraftingAgent = async (
       // Poll for completion
       while (!operation.done) {
         await new Promise(resolve => setTimeout(resolve, 5000));
-        operation = await aiService.client.operations.getVideosOperation({ operation });
+        operation = await getAI().operations.getVideosOperation({ operation });
       }
 
       // Check for RAI/Safety filtering in response
@@ -893,6 +916,7 @@ export const runShotDraftingAgent = async (
           const reason = operation.response.raiMediaFilteredReasons.join(', ');
           console.warn(`[Engineer] Shot ${shot.order}: Content filtered: ${reason}`);
           throw new Error(`Safety Filter: ${reason}`);
+
       }
 
       // Check for API-level errors in the operation object
@@ -1025,7 +1049,7 @@ export const runSceneGenerationAgent = async (
 
       await waitForQuota('VIDEO_GEN');
       
-      let operation = await aiService.client.models.generateVideos({
+      let operation = await getAI().models.generateVideos({
         model: 'veo-3.1-fast-generate-preview',
         prompt: currentPrompt,
         config: {
@@ -1040,7 +1064,7 @@ export const runSceneGenerationAgent = async (
       // Poll for completion
       while (!operation.done) {
         await new Promise(resolve => setTimeout(resolve, 5000));
-        operation = await aiService.client.operations.getVideosOperation({ operation });
+        operation = await getAI().operations.getVideosOperation({ operation });
       }
 
       // Check for RAI/Safety filtering in response
@@ -1117,7 +1141,8 @@ export const runRefinerAgent = async (lowResBlob: Blob, plan: DirectorPlan, spec
   const actionPrompt = specificPrompt || plan.shots?.[0]?.prompt || "Action occurring in the scene";
 
   // Use Gemini 3 Pro to Hallucinate details (Upscale)
-  const response = await aiService.client.models.generateContent({
+  const response = await getAI().models.generateContent({
+
     model: 'gemini-3-pro-image-preview',
     contents: {
       parts: [
@@ -1176,8 +1201,8 @@ export const runMasteringAgent = async (plan: DirectorPlan, startAnchor: Blob, e
   const endBase64 = await blobToBase64(endAnchor);
   const actionPrompt = specificPrompt || plan.shots?.[0]?.prompt || "Action occurring in the scene";
 
-  // Use Veo 3.1 with Image-to-Video (Start + End frames)
-  let operation = await aiService.client.models.generateVideos({
+  let operation = await getAI().models.generateVideos({
+
     model: 'veo-3.1-generate-preview', // High quality model
     prompt: `${actionPrompt}. ${plan.visual_style}. High Fidelity.`,
     
@@ -1203,7 +1228,8 @@ export const runMasteringAgent = async (plan: DirectorPlan, startAnchor: Blob, e
 
   while (!operation.done) {
     await new Promise(resolve => setTimeout(resolve, 8000)); // Slower polling for HQ
-    operation = await aiService.client.operations.getVideosOperation({ operation });
+    operation = await getAI().operations.getVideosOperation({ operation });
+
   }
 
   const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
@@ -1216,5 +1242,53 @@ export const runMasteringAgent = async (plan: DirectorPlan, startAnchor: Blob, e
     url: URL.createObjectURL(blob),
     blob,
     uri: videoUri
+  };
+};
+
+/**
+ * ARTIST AGENT — SINGLE ASSET REGEN
+ * Regenerates only one specific asset (character or background) based on user feedback.
+ * Called from the Left Sidebar "Regen Asset" button — all other assets are untouched.
+ */
+export const runSingleAssetRegen = async (
+  asset: AssetItem,
+  feedback: string,
+  plan: DirectorPlan
+): Promise<AssetItem> => {
+  console.log(`[Artist] Regenerating single asset: ${asset.type} — "${feedback}"`);
+
+  const ARTIST_MODEL = 'gemini-3-pro-image-preview';
+  const baseDescription = asset.type === 'character' ? plan.subject_prompt : plan.environment_prompt;
+  const feedbackPrefix = feedback.trim() ? `DIRECTOR REVISION: "${feedback}". Apply to: ` : '';
+
+  const prompt = asset.type === 'character'
+    ? `${feedbackPrefix}Professional character turnaround reference sheet (3-panel: Front, 3/4 Side, Back on neutral grey). Character: ${baseDescription}. Style: ${plan.visual_style}. Identical character across all panels, clean studio lighting.`
+    : `${feedbackPrefix}Professional location reference sheet (3-panel: Wide, Medium, Detail). Location: ${baseDescription}. Style: ${plan.visual_style}. Same location across all panels, consistent lighting.`;
+
+  await waitForQuota('IMAGE_GEN');
+
+  const contents: any = asset.base64
+    ? [{ text: prompt }, { inlineData: { mimeType: 'image/png', data: asset.base64 } }]
+    : prompt;
+
+  const response = await getAI().models.generateContent({
+    model: ARTIST_MODEL,
+    contents,
+    config: { responseModalities: ['TEXT', 'IMAGE'] }
+  });
+
+  const newBase64 = extractImageFromResponse(response);
+  if (!newBase64) throw new Error(`Single asset regen failed for ${asset.type}`);
+
+  // Revoke old ObjectURL to prevent memory leak (per AGENTS.md rule)
+  URL.revokeObjectURL(asset.url);
+
+  const newBlob = base64ToBlob(newBase64);
+  return {
+    ...asset,
+    blob: newBlob,
+    base64: newBase64,
+    url: URL.createObjectURL(newBlob),
+    source: 'ai' as const,
   };
 };
