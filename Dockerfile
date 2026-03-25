@@ -2,8 +2,8 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
-# Add build tools for native dependencies (e.g. imagehash-web)
-RUN apk add --no-cache python3 make g++
+# Add build tools for native dependencies (e.g. canvas required by imagehash-web)
+RUN apk add --no-cache python3 make g++ build-base cairo-dev pango-dev libjpeg-turbo-dev giflib-dev librsvg-dev
 
 COPY package*.json ./
 RUN npm ci
