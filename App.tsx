@@ -416,7 +416,7 @@ const App: React.FC = () => {
   const [studioPrompt, setStudioPrompt] = useState("");
   const [isPipelineStarted, setIsPipelineStarted] = useState(false);
   const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
-  const [isStudioMode, setIsStudioMode] = useState(true);
+  const [isStudioMode] = useState(true);
 
   useEffect(() => {
     // ... rest of checkApiKey logic
@@ -441,17 +441,8 @@ const App: React.FC = () => {
               <PhaseHeader />
             </div>
           )}
-          <div className="flex bg-gray-800 rounded-full p-1 border border-gray-700">
-            <button
-              onClick={() => setIsStudioMode(false)}
-              className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all ${!isStudioMode ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>
-              Classic
-            </button>
-            <button
-              onClick={() => setIsStudioMode(true)}
-              className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all flex items-center gap-1 ${isStudioMode ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>
-              Dailies Engine <span className="bg-emerald-500 text-black text-[9px] px-1 rounded font-bold">BETA</span>
-            </button>
+          <div className="flex bg-gray-800 rounded-full px-4 py-1.5 border border-gray-700">
+            <span className="text-xs font-bold text-indigo-400">AGENTWORKS STUDIO <span className="text-[9px] bg-indigo-500 text-white px-1 rounded ml-1">PRO</span></span>
           </div>
         </header>
 

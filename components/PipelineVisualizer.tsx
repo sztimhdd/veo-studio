@@ -87,8 +87,8 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate, o
                             <SparklesIcon className="w-6 h-6 text-indigo-400" />
                         </div>
                         <div>
-                            <h2 className="text-xl font-bold text-white">Agentic Production Studio</h2>
-                            <p className="text-xs text-gray-400 font-mono">GEMINI-3-PRO // VEO-3.1 // ORCHESTRATOR</p>
+                            <h2 className="text-xl font-bold text-white">AgentWorks (Classic)</h2>
+                            <p className="text-xs text-gray-400 font-mono">GEMINI-3-PRO // VEO-3.1 // PIPELINE</p>
                         </div>
                     </div>
                     {state.phase === 'COMPLETE' && (
