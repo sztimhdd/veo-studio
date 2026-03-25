@@ -7,7 +7,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { VideoArtifact, DirectorPlan, ShotEvaluation, EvalReport } from '../types';
 
 // Initialize AI (API key handled by env)
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 // Quota tracking for Critic (Gemini 3 Pro - Text)
 let lastCriticCallTime = 0;
@@ -50,7 +50,7 @@ export const runContinuitySupervisor = async (
     
     await waitForCriticQuota();
     
-    const response = await ai.models.generateContent({
+    const response = await getAI().models.generateContent({
       model: 'gemini-3-pro-preview',
       contents: [
         {
@@ -153,7 +153,7 @@ const calculateCharacterFidelity = async (
   
   await waitForCriticQuota();
   
-  const response = await ai.models.generateContent({
+  const response = await getAI().models.generateContent({
     model: 'gemini-3-pro-preview',
     contents: [
       {

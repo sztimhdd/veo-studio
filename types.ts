@@ -73,6 +73,23 @@ export type PipelinePhase =
   | 'COMPLETE'
   | 'ERROR';
 
+export enum DirectorModel {
+  FLASH = 'gemini-2.0-flash',
+  PRO = 'gemini-2.5-pro-preview-03-25',
+}
+
+export enum VideoModel {
+  FAST = 'veo-3.1-fast-generate-preview',
+  HIGH = 'veo-3.1-generate-preview',
+}
+
+export interface ProjectOptions {
+  directorModel: DirectorModel;
+  videoModel: VideoModel;
+  resolution: '720p' | '1080p';
+  aspectRatio: '16:9' | '9:16';
+}
+
 export interface ShotParams {
   id: string;
   order: number;
@@ -163,4 +180,5 @@ export interface ProductionState {
   artifacts: ProductionArtifacts;
   logs: LogEntry[];
   error: string | null;
+  projectOptions: ProjectOptions;
 }

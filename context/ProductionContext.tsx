@@ -4,7 +4,25 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 import React, { createContext, useContext, useReducer, ReactNode } from 'react';
-import { LogEntry, ProductionArtifacts, ProductionState, PipelinePhase, VideoArtifact, ShotEvaluation } from '../types';
+import {
+  LogEntry,
+  ProductionArtifacts,
+  ProductionState,
+  PipelinePhase,
+  VideoArtifact,
+  ShotEvaluation,
+  AssetItem,
+  ProjectOptions,
+  DirectorModel,
+  VideoModel,
+} from '../types';
+
+const defaultProjectOptions: ProjectOptions = {
+  directorModel: DirectorModel.FLASH,
+  videoModel: VideoModel.FAST,
+  resolution: '720p',
+  aspectRatio: '16:9',
+};
 
 // Initial State
 const initialState: ProductionState = {
@@ -19,9 +37,9 @@ const initialState: ProductionState = {
     evalReport: null,
     motionLocked: false
   },
-
   logs: [],
-  error: null
+  error: null,
+  projectOptions: defaultProjectOptions,
 };
 
 // Actions
@@ -30,6 +48,8 @@ type Action =
   | { type: 'SET_PHASE', payload: PipelinePhase }
   | { type: 'UPDATE_ARTIFACTS', payload: Partial<ProductionArtifacts> }
   | { type: 'UPDATE_SHOT', payload: { index: number, shot: VideoArtifact } }
+  | { type: 'UPDATE_ASSET', payload: { id: string, asset: AssetItem } }
+  | { type: 'UPDATE_PROJECT_OPTIONS', payload: Partial<ProjectOptions> }
   | { type: 'SET_MOTION_LOCK', payload: boolean }
   | { type: 'SET_EVALUATION', payload: { index: number, evaluation: ShotEvaluation } }
   | { type: 'ADD_LOG', payload: Omit<LogEntry, 'timestamp'> }
@@ -40,7 +60,7 @@ type Action =
 const reducer = (state: ProductionState, action: Action): ProductionState => {
   switch (action.type) {
     case 'START_PIPELINE':
-      return { ...initialState, phase: 'PLANNING' };
+      return { ...initialState, phase: 'PLANNING', projectOptions: state.projectOptions };
     case 'SET_PHASE':
       return { ...state, phase: action.payload };
     case 'UPDATE_ARTIFACTS':
@@ -48,25 +68,34 @@ const reducer = (state: ProductionState, action: Action): ProductionState => {
         ...state,
         artifacts: { ...state.artifacts, ...action.payload }
       };
-    case 'UPDATE_SHOT':
+    case 'UPDATE_SHOT': {
       const newShots = [...state.artifacts.shots];
       newShots[action.payload.index] = action.payload.shot;
       return {
         ...state,
-        artifacts: {
-          ...state.artifacts,
-          shots: newShots
-        }
+        artifacts: { ...state.artifacts, shots: newShots }
+      };
+    }
+    case 'UPDATE_ASSET': {
+      const updatedAssets = state.artifacts.assets.map(a =>
+        a.id === action.payload.id ? action.payload.asset : a
+      );
+      return {
+        ...state,
+        artifacts: { ...state.artifacts, assets: updatedAssets }
+      };
+    }
+    case 'UPDATE_PROJECT_OPTIONS':
+      return {
+        ...state,
+        projectOptions: { ...state.projectOptions, ...action.payload }
       };
     case 'SET_MOTION_LOCK':
       return {
         ...state,
-        artifacts: {
-          ...state.artifacts,
-          motionLocked: action.payload
-        }
+        artifacts: { ...state.artifacts, motionLocked: action.payload }
       };
-    case 'SET_EVALUATION':
+    case 'SET_EVALUATION': {
       const evaluatedShots = [...state.artifacts.shots];
       evaluatedShots[action.payload.index] = {
         ...evaluatedShots[action.payload.index],
@@ -74,11 +103,9 @@ const reducer = (state: ProductionState, action: Action): ProductionState => {
       };
       return {
         ...state,
-        artifacts: {
-          ...state.artifacts,
-          shots: evaluatedShots
-        }
+        artifacts: { ...state.artifacts, shots: evaluatedShots }
       };
+    }
     case 'ADD_LOG':
       return {
         ...state,

@@ -10,7 +10,8 @@ import { CurvedArrowDownIcon, SparklesIcon, ArrowLeftIcon } from './components/i
 import LoadingIndicator from './components/LoadingIndicator';
 import PromptForm from './components/PromptForm';
 import VideoResult from './components/VideoResult';
-import PipelineVisualizer from './components/PipelineVisualizer';
+import StudioLayout from './components/studio/StudioLayout';
+import PhaseHeader from './components/studio/PhaseHeader';
 import { ProductionProvider, useProduction } from './context/ProductionContext';
 import { ImageUpload } from './components/ImageUpload';
 import { generateVideo } from './services/geminiService';
@@ -256,7 +257,7 @@ const StudioContent: React.FC<{
         </div>
       ) : (
         <div className="flex flex-col h-full">
-          <div className="flex justify-between items-center mb-6 pl-2">
+          <div className="flex items-center justify-between mb-4 px-4 flex-shrink-0">
             <button onClick={() => { setIsStarted(false); dispatch({ type: 'RESET' }); }} className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-gray-500 hover:text-white transition-colors">
               <ArrowLeftIcon className="w-4 h-4" /> Reset Studio
             </button>
@@ -265,7 +266,9 @@ const StudioContent: React.FC<{
               <span className="text-xs text-green-500 font-mono">LIVE SESSION</span>
             </div>
           </div>
-          <PipelineVisualizer onRegenerate={handleRegenerateShot} />
+          <div className="flex-grow overflow-hidden border-t border-gray-800">
+            <StudioLayout onRegenerateShot={handleRegenerateShot} />
+          </div>
         </div>
       )}
     </div>
@@ -387,10 +390,15 @@ const App: React.FC = () => {
       <div className="h-screen bg-black text-gray-200 flex flex-col font-sans overflow-hidden">
         {showApiKeyDialog && <ApiKeyDialog onContinue={handleApiKeyDialogContinue} />}
 
-        <header className="py-4 px-8 border-b border-gray-800 bg-gray-900/50 flex justify-between items-center z-10">
-          <h1 className="text-2xl font-semibold tracking-wide bg-gradient-to-r from-indigo-400 via-purple-500 to-pink-500 bg-clip-text text-transparent">
-            Veo Studio
+        <header className="py-4 px-8 border-b border-gray-800 bg-gray-900/50 flex justify-between items-center z-20 shadow-md relative">
+          <h1 className="text-2xl font-bold tracking-widest bg-gradient-to-r from-indigo-400 via-purple-500 to-pink-500 bg-clip-text text-transparent uppercase" style={{ fontFamily: 'Poppins, sans-serif' }}>
+            AgentWorks
           </h1>
+          {isStudioMode && isPipelineStarted && (
+            <div className="absolute left-1/2 transform -translate-x-1/2 hidden lg:block">
+              <PhaseHeader />
+            </div>
+          )}
           <div className="flex bg-gray-800 rounded-full p-1 border border-gray-700">
             <button
               onClick={() => setIsStudioMode(false)}
