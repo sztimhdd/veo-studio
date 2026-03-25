@@ -8,7 +8,7 @@ on:
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   REGION: us-central1
-  SERVICE_NAME: veo-studio
+  SERVICE_NAME: veo-studio-app
   REPO_NAME: veo-studio
 
 jobs:
@@ -54,7 +54,7 @@ jobs:
         run: |
           IMAGE=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
           docker build \
-            --build-arg GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
+            --build-arg VITE_GEMINI_API_KEY=${{ secrets.API_KEY }} \
             -t $IMAGE .
           docker push $IMAGE
 

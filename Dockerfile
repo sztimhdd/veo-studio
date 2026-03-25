@@ -12,7 +12,9 @@ COPY . .
 
 # Build-time env: injected by Cloud Build / GitHub Actions
 ARG GEMINI_API_KEY
+ARG VITE_GEMINI_API_KEY
 ENV GEMINI_API_KEY=$GEMINI_API_KEY
+ENV VITE_GEMINI_API_KEY=$VITE_GEMINI_API_KEY
 
 RUN npm run build
 
