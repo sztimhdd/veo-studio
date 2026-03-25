@@ -2,6 +2,9 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# Add build tools for native dependencies (e.g. imagehash-web)
+RUN apk add --no-cache python3 make g++
+
 COPY package*.json ./
 RUN npm ci
 
