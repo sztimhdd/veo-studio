@@ -25,26 +25,9 @@ github-deployer-key.json
 *.sln
 *.sw?
 
-# Environment
-.env
-.env.*
-
-# Testing
-test-results/
-playwright-report/
-blob-report/
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
 /playwright/.cache/
 /playwright/.auth/
-
-# Agent/Tooling
-.opencode/
-.sisyphus/
-
-# Local Resources
-test_set/
-gh_token.txt
-resolved_config.json
-current_resolved_config.json
-skills/
-bin/
-

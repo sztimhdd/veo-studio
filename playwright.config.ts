@@ -16,7 +16,6 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
     viewport: { width: 1440, height: 900 },
-    testIdAttribute: 'data-testid',
   },
   projects: [
     {

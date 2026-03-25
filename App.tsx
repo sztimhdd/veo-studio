@@ -3,7 +3,8 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
-import React, { useEffect, useState } from 'react';
+import { Video } from '@google/genai';
+import React, { useCallback, useEffect, useState } from 'react';
 import ApiKeyDialog from './components/ApiKeyDialog';
 import { CurvedArrowDownIcon, SparklesIcon, ArrowLeftIcon } from './components/icons';
 import LoadingIndicator from './components/LoadingIndicator';
@@ -13,41 +14,25 @@ import StudioLayout from './components/studio/StudioLayout';
 import PhaseHeader from './components/studio/PhaseHeader';
 import { ProductionProvider, useProduction } from './context/ProductionContext';
 import { ImageUpload } from './components/ImageUpload';
+import { generateVideo } from './services/geminiService';
 import {
+  extractFrameFromBlob,
   runArtistAgent,
   runDirectorAgent,
   runProductionPipeline,
-  runRefinementPhase,
-  runSceneGenerationAgent
+  runRefinerAgent,
+  runShotDraftingAgent
 } from './services/pipelineService';
 import { runContinuitySupervisor } from './services/criticService';
 import {
+  AppState,
+  AspectRatio,
+  GenerateVideoParams,
+  GenerationMode,
   ImageFile,
+  Resolution,
+  VideoFile,
 } from './types';
-
-const TEST_SCENARIOS = [
-  {
-    id: 'cat-food',
-    label: '🐱 Cat Food',
-    promptFile: '/test/test_prompt1.txt',
-    charFile: '/test/Belle.png',
-    envFile: '/test/env.jpg'
-  },
-  {
-    id: 'kyoto-dog',
-    label: '🐕 Kyoto Dog',
-    promptFile: '/test/test_prompt2.txt',
-    charFile: '/test/Rover.png',
-    envFile: '/test/kyoto-japan-26.jpg'
-  },
-  {
-    id: 'bolivia-cat',
-    label: '🇧🇴 Bolivia Cat',
-    promptFile: '/test/test_prompt3.txt',
-    charFile: '/test/Belle.png',
-    envFile: '/test/bolivia-coast.jpg'
-  }
-];
 
 // Wrapper component to access context
 const StudioContent: React.FC<{
@@ -59,67 +44,6 @@ const StudioContent: React.FC<{
   const { state, dispatch } = useProduction();
   const [userCharacter, setUserCharacter] = useState<ImageFile | null>(null);
   const [userEnvironment, setUserEnvironment] = useState<ImageFile | null>(null);
-  const [isLoadingTest, setIsLoadingTest] = useState(false);
-
-  const fileToImageFile = (file: File): Promise<ImageFile> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = (reader.result as string).split(',')[1];
-        if (base64) resolve({ file, base64 });
-        else reject(new Error('Failed to read file'));
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  };
-
-  const loadTestScenario = async (scenario: typeof TEST_SCENARIOS[0]) => {
-    setIsLoadingTest(true);
-    try {
-      const [promptRes, charRes, envRes] = await Promise.all([
-        fetch(scenario.promptFile),
-        fetch(scenario.charFile),
-        fetch(scenario.envFile)
-      ]);
-
-      if (!promptRes.ok || !charRes.ok || !envRes.ok) {
-        throw new Error(`Failed to load assets for ${scenario.label}`);
-      }
-
-      // Check for HTML response (SPA fallback 404)
-      const promptContentType = promptRes.headers.get('content-type');
-      if (promptContentType && promptContentType.includes('text/html')) {
-        throw new Error(`Asset not found (server returned HTML for ${scenario.promptFile})`);
-      }
-
-      const promptText = await promptRes.text();
-      
-      // Secondary check: if the text looks like HTML doctype
-      if (promptText.trim().toLowerCase().startsWith('<!doctype html') || promptText.trim().toLowerCase().startsWith('<html')) {
-        throw new Error(`Asset not found (content is HTML for ${scenario.promptFile})`);
-      }
-
-      const charBlob = await charRes.blob();
-      const envBlob = await envRes.blob();
-
-      // Get filenames from paths
-      const charName = scenario.charFile.split('/').pop() || 'char.png';
-      const envName = scenario.envFile.split('/').pop() || 'env.jpg';
-
-      const charFile = new File([charBlob], charName, { type: charBlob.type });
-      const envFile = new File([envBlob], envName, { type: envBlob.type });
-
-      setUserCharacter(await fileToImageFile(charFile));
-      setUserEnvironment(await fileToImageFile(envFile));
-      setPrompt(promptText.trim());
-    } catch (e) {
-      console.error("Test load failed:", e);
-      alert(`Failed to load test set: ${scenario.label}`);
-    } finally {
-      setIsLoadingTest(false);
-    }
-  };
 
   const startPipeline = async () => {
     if (!prompt.trim()) return;
@@ -130,11 +54,7 @@ const StudioContent: React.FC<{
     try {
       // 1. DIRECTOR
       dispatch({ type: 'ADD_LOG', payload: { agent: 'Director', message: 'Breaking script into 3 distinct shots...', phase: 'PLANNING' } });
-      const plan = await runDirectorAgent(
-        prompt,
-        userCharacter?.file as Blob,
-        userEnvironment?.file as Blob
-      );
+      const plan = await runDirectorAgent(prompt);
       dispatch({ type: 'UPDATE_ARTIFACTS', payload: { plan } });
       dispatch({ type: 'ADD_LOG', payload: { agent: 'Director', message: 'Shot list approved. Handoff to Art Dept.', phase: 'PLANNING' } });
 
@@ -204,18 +124,21 @@ const StudioContent: React.FC<{
     }
   };
 
-  const handleRegenerateScene = async (index: number, feedback: string) => {
+  const handleRegenerateShot = async (index: number, feedback: string) => {
     if (!state.artifacts.plan || !state.artifacts.assets) return;
     
-    const sceneParams = state.artifacts.plan.scenes[index];
-    const currentScene = state.artifacts.shots[index];
-    const nextVersion = (currentScene?.version || 1) + 1;
+    const shotParams = state.artifacts.plan.shots[index];
+    const currentShot = state.artifacts.shots[index];
+    const nextVersion = (currentShot?.version || 1) + 1;
 
-    dispatch({ type: 'ADD_LOG', payload: { agent: 'Engineer', message: `Regenerating Scene ${index + 1} (Take ${nextVersion})...`, phase: 'DRAFTING' } });
+    dispatch({ type: 'ADD_LOG', payload: { agent: 'Engineer', message: `Regenerating SC01_SH0${index + 1} (Take ${nextVersion})...`, phase: 'DRAFTING' } });
+    
+    // We don't set the whole phase to DRAFTING to avoid UI disruption, 
+    // but the specific shot card will show loading based on a local state we'll add to Visualizer.
     
     try {
-      const newScene = await runSceneGenerationAgent(
-        sceneParams, 
+      const newShot = await runShotDraftingAgent(
+        shotParams, 
         state.artifacts.plan, 
         state.artifacts.assets, 
         feedback
@@ -225,101 +148,15 @@ const StudioContent: React.FC<{
         type: 'UPDATE_SHOT', 
         payload: { 
           index, 
-          shot: { ...newScene, userFeedback: feedback, version: nextVersion } 
+          shot: { ...newShot, userFeedback: feedback, version: nextVersion } 
         } 
       });
       
-      dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Scene ${index + 1} Take ${nextVersion} ready.`, phase: 'COMPLETE' } });
+      dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Shot ${index + 1} Take ${nextVersion} ready.`, phase: 'COMPLETE' } });
     } catch (e: any) {
       console.error(e);
       dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Regeneration failed: ${e.message}`, phase: 'ERROR' } });
     }
-  };
-
-  const handleRefineShot = async (index: number) => {
-    if (!state.artifacts.plan || !state.artifacts.assets || !state.artifacts.shots[index]) return;
-    
-    dispatch({ 
-      type: 'START_REFINEMENT', 
-      payload: { video: state.artifacts.shots[index] } 
-    });
-    
-    try {
-      const refinedShot = await runRefinementPhase(
-        state.artifacts.shots[index],
-        state.artifacts.plan,
-        state.artifacts.assets
-      );
-      
-      dispatch({ 
-        type: 'UPDATE_SHOT', 
-        payload: { 
-          index, 
-          shot: refinedShot
-        } 
-      });
-      
-      dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Refinement complete: Consistency Score ${((refinedShot.consistencyScore || 0) * 100).toFixed(1)}%`, phase: 'COMPLETE' } });
-      dispatch({ type: 'SET_PHASE', payload: 'COMPLETE' });
-      
-    } catch (e: any) {
-      console.error(e);
-      dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Refinement failed: ${e.message}`, phase: 'ERROR' } });
-      dispatch({ type: 'SET_ERROR', payload: e.message });
-    }
-  };
-
-  const handleRefineAll = async () => {
-    if (!state.artifacts.plan || !state.artifacts.assets || !state.artifacts.shots) return;
-    
-    const totalShots = state.artifacts.shots.length;
-    dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Starting batch refinement for ${totalShots} shots...`, phase: 'REFINING' } });
-    
-    for (let i = 0; i < totalShots; i++) {
-      // Skip if already refined
-      if (state.artifacts.shots[i]?.selectedKeyframe) {
-        dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Scene ${i + 1}: Already mastered, skipping.`, phase: 'REFINING' } });
-        continue;
-      }
-      
-      dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Mastering Scene ${i + 1}/${totalShots} (4K)...`, phase: 'REFINING' } });
-      
-      try {
-        dispatch({ 
-          type: 'START_REFINEMENT', 
-          payload: { video: state.artifacts.shots[i] } 
-        });
-        
-        const refinedShot = await runRefinementPhase(
-          state.artifacts.shots[i],
-          state.artifacts.plan,
-          state.artifacts.assets
-        );
-        
-        dispatch({ 
-          type: 'UPDATE_SHOT', 
-          payload: { 
-            index: i, 
-            shot: refinedShot
-          } 
-        });
-        
-        dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Scene ${i + 1} mastered. Score: ${((refinedShot.consistencyScore || 0) * 100).toFixed(1)}%`, phase: 'COMPLETE' } });
-        
-      } catch (e: any) {
-        console.error(e);
-        dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Scene ${i + 1} failed: ${e.message}`, phase: 'ERROR' } });
-      }
-      
-      // Throttle between shots to respect quota limits
-      if (i < totalShots - 1) {
-        dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Cooldown before next shot (10s)...`, phase: 'REFINING' } });
-        await new Promise(resolve => setTimeout(resolve, 10000));
-      }
-    }
-    
-    dispatch({ type: 'SET_PHASE', payload: 'COMPLETE' });
-    dispatch({ type: 'ADD_LOG', payload: { agent: 'System', message: `Batch mastering complete! All scenes ready for export.`, phase: 'COMPLETE' } });
   };
 
   return (
@@ -367,18 +204,44 @@ const StudioContent: React.FC<{
           />
 
           <div className="flex gap-4 items-center flex-wrap justify-center">
-            <div className="flex gap-2">
-              {TEST_SCENARIOS.map((scenario) => (
-                <button
-                  key={scenario.id}
-                  onClick={() => loadTestScenario(scenario)}
-                  disabled={isLoadingTest}
-                  className="px-4 py-2 rounded-full text-indigo-400 border border-indigo-500/30 hover:bg-indigo-500/10 transition-all font-medium text-xs whitespace-nowrap disabled:opacity-50">
-                  {isLoadingTest ? 'Loading...' : scenario.label}
-                </button>
-              ))}
-            </div>
-            <div className="w-px h-8 bg-gray-800 mx-2 hidden md:block"></div>
+            <button
+              onClick={async () => {
+                const fileToImageFile = (file: File): Promise<ImageFile> => {
+                  return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      const base64 = (reader.result as string).split(',')[1];
+                      if (base64) resolve({ file, base64 });
+                      else reject(new Error('Failed to read file'));
+                    };
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                  });
+                };
+
+                try {
+                  const belleRes = await fetch('/test/Belle.png');
+                  const envRes = await fetch('/test/env.jpg');
+
+                  if (!belleRes.ok || !envRes.ok) throw new Error('Test assets not found in /public/test/');
+
+                  const belleBlob = await belleRes.blob();
+                  const envBlob = await envRes.blob();
+
+                  const belleFile = new File([belleBlob], 'Belle.png', { type: 'image/png' });
+                  const envFile = new File([envBlob], 'env.jpg', { type: 'image/jpeg' });
+
+                  setUserCharacter(await fileToImageFile(belleFile));
+                  setUserEnvironment(await fileToImageFile(envFile));
+                  setPrompt("Create a 10-second cat food commercial. The main character is a fluffy white cat named Belle. Start with Belle looking hungry and meowing at an empty bowl. She discovers a can of premium cat food opening, with steam rising and chunks of meat visible. Belle eats happily, purring and licking her lips. End with text overlay: 'Belle loves [Brand] Cat Food – Nutritious and Delicious!' Upbeat music, vibrant colors, smooth animation.");
+                } catch (e) {
+                  console.error("Failed to load test set:", e);
+                  alert("Failed to load test set. Make sure /public/test/Belle.png and env.jpg exist.");
+                }
+              }}
+              className="px-6 py-3 rounded-full text-indigo-400 border border-indigo-500/30 hover:bg-indigo-500/10 transition-all font-medium text-sm">
+              Test Set
+            </button>
             <button
               onClick={startPipeline}
               disabled={!prompt.trim()}
@@ -400,11 +263,7 @@ const StudioContent: React.FC<{
             </div>
           </div>
           <div className="flex-grow overflow-hidden border-t border-gray-800">
-            <StudioLayout 
-              onRegenerateShot={handleRegenerateScene} 
-              onRefineShot={handleRefineShot}
-              onRefineAll={handleRefineAll}
-            />
+            <StudioLayout onRegenerateShot={handleRegenerateShot} />
           </div>
         </div>
       )}
@@ -413,19 +272,114 @@ const StudioContent: React.FC<{
 }
 
 const App: React.FC = () => {
+  const [appState, setAppState] = useState<AppState>(AppState.IDLE);
+  const [isStudioMode] = useState(true);
   const [studioPrompt, setStudioPrompt] = useState("");
   const [isPipelineStarted, setIsPipelineStarted] = useState(false);
+
+  // --- CLASSIC MODE STATE ---
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [lastConfig, setLastConfig] = useState<GenerateVideoParams | null>(null);
+  const [lastVideoObject, setLastVideoObject] = useState<Video | null>(null);
+  const [lastVideoBlob, setLastVideoBlob] = useState<Blob | null>(null);
   const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
-  const [isStudioMode] = useState(true);
+  const [initialFormValues, setInitialFormValues] = useState<GenerateVideoParams | null>(null);
 
   useEffect(() => {
-    // ... rest of checkApiKey logic
+    const checkApiKey = async () => {
+      if (window.aistudio) {
+        try {
+          if (!(await window.aistudio.hasSelectedApiKey())) {
+            setShowApiKeyDialog(true);
+          }
+        } catch (error) {
+          console.warn('aistudio.hasSelectedApiKey check failed', error);
+          setShowApiKeyDialog(true);
+        }
+      }
+    };
+    checkApiKey();
   }, []);
+
+  const handleGenerate = useCallback(async (params: GenerateVideoParams) => {
+    if (window.aistudio) {
+      try {
+        if (!(await window.aistudio.hasSelectedApiKey())) {
+          setShowApiKeyDialog(true);
+          return;
+        }
+      } catch (error) {
+        setShowApiKeyDialog(true);
+        return;
+      }
+    }
+
+    setAppState(AppState.LOADING);
+    setErrorMessage(null);
+    setLastConfig(params);
+    setInitialFormValues(null);
+
+    try {
+      const { objectUrl, blob, video } = await generateVideo(params);
+      setVideoUrl(objectUrl);
+      setLastVideoBlob(blob);
+      setLastVideoObject(video);
+      setAppState(AppState.SUCCESS);
+    } catch (error: any) {
+      console.error('Video generation failed:', error);
+      const msg = error.message || 'Unknown error';
+      if (msg.includes('Requested entity was not found') || msg.includes('403')) {
+        setShowApiKeyDialog(true);
+      }
+      setErrorMessage(msg);
+      setAppState(AppState.ERROR);
+    }
+  }, []);
+
+  const handleRetry = useCallback(() => {
+    if (lastConfig) handleGenerate(lastConfig);
+  }, [lastConfig, handleGenerate]);
 
   const handleApiKeyDialogContinue = async () => {
     setShowApiKeyDialog(false);
     if (window.aistudio) await window.aistudio.openSelectKey();
   };
+
+  const handleNewVideo = useCallback(() => {
+    setAppState(AppState.IDLE);
+    setVideoUrl(null);
+    setErrorMessage(null);
+    setLastConfig(null);
+    setLastVideoObject(null);
+    setLastVideoBlob(null);
+    setInitialFormValues(null);
+  }, []);
+
+  const handleExtend = useCallback(async () => {
+    if (lastConfig && lastVideoBlob && lastVideoObject) {
+      const file = new File([lastVideoBlob], 'last_video.mp4', { type: lastVideoBlob.type });
+      const videoFile: VideoFile = { file, base64: '' };
+      setInitialFormValues({
+        ...lastConfig,
+        mode: GenerationMode.EXTEND_VIDEO,
+        prompt: '',
+        inputVideo: videoFile,
+        inputVideoObject: lastVideoObject,
+        resolution: Resolution.P720,
+        startFrame: null,
+        endFrame: null,
+        referenceImages: [],
+        styleImage: null,
+        isLooping: false
+      });
+      setAppState(AppState.IDLE);
+      setVideoUrl(null);
+      setErrorMessage(null);
+    }
+  }, [lastConfig, lastVideoBlob, lastVideoObject]);
+
+  const canExtend = lastConfig?.resolution === Resolution.P720;
 
   return (
     <ProductionProvider>
@@ -441,18 +395,57 @@ const App: React.FC = () => {
               <PhaseHeader />
             </div>
           )}
-          <div className="flex bg-gray-800 rounded-full px-4 py-1.5 border border-gray-700">
-            <span className="text-xs font-bold text-indigo-400">AGENTWORKS STUDIO <span className="text-[9px] bg-indigo-500 text-white px-1 rounded ml-1">PRO</span></span>
+          <div className="flex bg-gray-800 rounded-full px-4 py-1 border border-gray-700">
+            <span className="text-xs font-bold text-indigo-400">AGENTWORKS <span className="text-[9px] bg-indigo-500 text-white px-1 rounded ml-1">PRO</span></span>
           </div>
         </header>
 
         <main className="flex-grow w-full h-full overflow-hidden relative">
-          <StudioContent
-            prompt={studioPrompt}
-            setPrompt={setStudioPrompt}
-            isStarted={isPipelineStarted}
-            setIsStarted={setIsPipelineStarted}
-          />
+          {isStudioMode ? (
+            <StudioContent
+              prompt={studioPrompt}
+              setPrompt={setStudioPrompt}
+              isStarted={isPipelineStarted}
+              setIsStarted={setIsPipelineStarted}
+            />
+          ) : (
+            <div className="w-full max-w-4xl mx-auto flex-grow flex flex-col p-4 h-full overflow-y-auto">
+              {appState === AppState.IDLE ? (
+                <>
+                  <div className="flex-grow flex items-center justify-center min-h-[300px]">
+                    <div className="relative text-center">
+                      <h2 className="text-3xl text-gray-600">Type in the prompt box to start</h2>
+                      <CurvedArrowDownIcon className="absolute top-full left-1/2 -translate-x-1/2 mt-4 w-24 h-24 text-gray-700 opacity-60" />
+                    </div>
+                  </div>
+                  <div className="pb-4">
+                    <PromptForm onGenerate={handleGenerate} initialValues={initialFormValues} />
+                  </div>
+                </>
+              ) : (
+                <div className="flex-grow flex items-center justify-center">
+                  {appState === AppState.LOADING && <LoadingIndicator />}
+                  {appState === AppState.SUCCESS && videoUrl && (
+                    <VideoResult
+                      videoUrl={videoUrl}
+                      onRetry={handleRetry}
+                      onNewVideo={handleNewVideo}
+                      onExtend={handleExtend}
+                      canExtend={canExtend}
+                      aspectRatio={lastConfig?.aspectRatio || AspectRatio.LANDSCAPE}
+                    />
+                  )}
+                  {appState === AppState.ERROR && errorMessage && (
+                    <div className="text-center bg-red-900/20 border border-red-500 p-8 rounded-lg">
+                      <h2 className="text-xl text-red-400 mb-2">Error</h2>
+                      <p className="text-red-300">{errorMessage}</p>
+                      <button onClick={() => { setAppState(AppState.IDLE); setErrorMessage(null); }} className="mt-4 px-4 py-2 bg-gray-700 rounded">Back</button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </main>
       </div>
     </ProductionProvider>

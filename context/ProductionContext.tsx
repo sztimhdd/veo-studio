@@ -32,7 +32,7 @@ const initialState: ProductionState = {
     assets: [],
     shots: [],
     draftVideo: null,
-    anchorFrames: null,
+    anchorFrame: null,
     finalVideo: null,
     evalReport: null,
     motionLocked: false
@@ -54,11 +54,10 @@ type Action =
   | { type: 'SET_EVALUATION', payload: { index: number, evaluation: ShotEvaluation } }
   | { type: 'ADD_LOG', payload: Omit<LogEntry, 'timestamp'> }
   | { type: 'SET_ERROR', payload: string }
-  | { type: 'RESET' }
-  | { type: 'START_REFINEMENT', payload: { video: VideoArtifact } };
+  | { type: 'RESET' };
 
 // Reducer
-export const reducer = (state: ProductionState, action: Action): ProductionState => {
+const reducer = (state: ProductionState, action: Action): ProductionState => {
   switch (action.type) {
     case 'START_PIPELINE':
       return { ...initialState, phase: 'PLANNING', projectOptions: state.projectOptions };
@@ -77,17 +76,6 @@ export const reducer = (state: ProductionState, action: Action): ProductionState
         artifacts: { ...state.artifacts, shots: newShots }
       };
     }
-    case 'START_REFINEMENT':
-      return {
-        ...state,
-        phase: 'REFINING',
-        logs: [...state.logs, {
-          timestamp: Date.now(),
-          agent: 'Engineer',
-          phase: 'REFINING',
-          message: `Refining shot (ID: ${action.payload.video.shotId})...`
-        }]
-      };
     case 'UPDATE_ASSET': {
       const updatedAssets = state.artifacts.assets.map(a =>
         a.id === action.payload.id ? action.payload.asset : a

@@ -3,10 +3,61 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
+import { Video } from '@google/genai';
+
+export enum AppState {
+  IDLE,
+  LOADING,
+  SUCCESS,
+  ERROR,
+}
+
+export enum VeoModel {
+  VEO_FAST = 'veo-3.1-fast-generate-preview',
+  VEO = 'veo-3.1-generate-preview',
+}
+
+export enum AspectRatio {
+  LANDSCAPE = '16:9',
+  PORTRAIT = '9:16',
+}
+
+export enum Resolution {
+  P720 = '720p',
+  P1080 = '1080p',
+  P4K = '4k',
+}
+
+export enum GenerationMode {
+  TEXT_TO_VIDEO = 'Text to Video',
+  FRAMES_TO_VIDEO = 'Frames to Video',
+  REFERENCES_TO_VIDEO = 'References to Video',
+  EXTEND_VIDEO = 'Extend Video',
+}
 
 export interface ImageFile {
   file: File;
   base64: string;
+}
+
+export interface VideoFile {
+  file: File;
+  base64: string;
+}
+
+export interface GenerateVideoParams {
+  prompt: string;
+  model: VeoModel;
+  aspectRatio: AspectRatio;
+  resolution: Resolution;
+  mode: GenerationMode;
+  startFrame?: ImageFile | null;
+  endFrame?: ImageFile | null;
+  referenceImages?: ImageFile[];
+  styleImage?: ImageFile | null;
+  inputVideo?: VideoFile | null;
+  inputVideoObject?: Video | null;
+  isLooping?: boolean;
 }
 
 // --- AGENTIC PIPELINE TYPES ---
@@ -21,25 +72,6 @@ export type PipelinePhase =
   | 'RENDERING'     // Veo High Quality
   | 'COMPLETE'
   | 'ERROR';
-
-// --- DYNAMIC DIRECTOR TYPES (New) ---
-
-export interface SceneSegment {
-  start_time: string; // "00:00"
-  end_time: string;   // "00:04"
-  prompt: string;
-  camera_movement: string;
-  audio_cues?: string;
-}
-
-export interface SceneParams {
-  id: string;
-  order: number;
-  duration_seconds: number; // 1-8 seconds max
-  segments: SceneSegment[];
-  master_prompt: string; // Combined timestamped prompt for Veo
-  transition?: TransitionSpec; // Transition effect to next shot (null for last shot)
-}
 
 export enum DirectorModel {
   FLASH = 'gemini-2.0-flash',
@@ -66,21 +98,12 @@ export interface ShotParams {
   duration_seconds: number;
 }
 
-// --- TRANSITION TYPES ---
-
-export interface TransitionSpec {
-  type: string;        // xfade type: 'fade', 'fadeblack', 'dissolve', 'pixelize', 'wipeh', 'wiped'
-  duration: number;    // seconds (0.1 - 2.0 recommended)
-  easing?: string;     // 'ease-in-out', 'linear' (for future enhancement)
-}
-
 export interface DirectorPlan {
   subject_prompt: string;
   environment_prompt: string;
   visual_style: string;
+  shots: ShotParams[];
   reasoning: string;
-  scenes: SceneParams[]; // New: Variable scene structure
-  shots?: ShotParams[];  // Legacy: Optional for backward compatibility
 }
 
 export interface AssetItem {
@@ -99,20 +122,6 @@ export interface VideoArtifact {
   shotId?: string; // Link back to the shot params
   userFeedback?: string; // Human critique
   version?: number; // Take 1, 2, 3...
-  // New fields for Phase 4 (Refining)
-  keyframes?: string[]; // Base64 strings of extracted frames
-  consistencyScore?: number; // 0-1 score
-  selectedKeyframe?: string; // Base64 of the best frame
-  anchorFrames?: {
-    start: {
-      original: string; // Base64
-      upscaled: string; // Base64
-    };
-    end: {
-      original: string; // Base64
-      upscaled: string; // Base64
-    };
-  };
   evaluation?: ShotEvaluation; // AI Critic evaluation results
   motionLocked?: boolean; // Whether this shot's motion is locked
 }
@@ -141,7 +150,6 @@ export interface EvalReport {
   characterFidelity: number;        // Cross-shot consistency
   overallScore: number;
   passed: boolean;
-
 }
 
 export interface ProductionArtifacts {
@@ -149,17 +157,10 @@ export interface ProductionArtifacts {
   assets: AssetItem[]; // The "Bible"
   shots: VideoArtifact[]; // The "Dailies" (Film Strip)
   draftVideo: VideoArtifact | null; // Keep for backward compatibility/Single-shot mode
-  anchorFrames: {
-    start: {
-      original: string; // ObjectURL of the low-res frame
-      upscaled: string; // ObjectURL of the high-res frame
-      blob: Blob;       // The high-res blob
-    };
-    end: {
-      original: string; // ObjectURL of the low-res frame
-      upscaled: string; // ObjectURL of the high-res frame
-      blob: Blob;       // The high-res blob
-    };
+  anchorFrame: {
+    original: string; // ObjectURL of the low-res frame
+    upscaled: string; // ObjectURL of the high-res frame
+    blob: Blob;       // The high-res blob
   } | null;
   finalVideo: VideoArtifact | null;
   evalReport: EvalReport | null; // AI Critic evaluation report (Phase 3)

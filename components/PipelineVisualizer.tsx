@@ -5,20 +5,16 @@
 */
 import React, { useEffect, useRef, useState } from 'react';
 import { useProduction } from '../context/ProductionContext';
-import { ArrowRightIcon, SparklesIcon, ChevronDownIcon, TvIcon, VideoIcon, FileImageIcon, FilmIcon, PlayIcon, CheckCircleIcon, RefreshCwIcon, MessageSquareIcon, Wand2Icon } from 'lucide-react';
+import { ArrowRightIcon, SparklesIcon, ChevronDownIcon, TvIcon, VideoIcon, FileImageIcon, FilmIcon, PlayIcon, CheckCircleIcon, RefreshCwIcon, MessageSquareIcon } from 'lucide-react';
 
 interface PipelineVisualizerProps {
     onRegenerate?: (index: number, feedback: string) => Promise<void>;
-    onRefine?: (index: number) => Promise<void>;
-    onRefineAll?: () => Promise<void>;
 }
 
-const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate, onRefine, onRefineAll }) => {
+const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate }) => {
     const { state } = useProduction();
     const logsEndRef = useRef<HTMLDivElement>(null);
     const [regeneratingIndices, setRegeneratingIndices] = useState<Set<number>>(new Set());
-    const [refiningIndices, setRefiningIndices] = useState<Set<number>>(new Set());
-    const [isRefiningAll, setIsRefiningAll] = useState(false);
     const [feedbackInputs, setFeedbackInputs] = useState<Record<number, string>>({});
     const [showFeedbackFor, setShowFeedbackFor] = useState<number | null>(null);
 
@@ -36,21 +32,6 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate, o
                 await onRegenerate(index, feedback);
             } finally {
                 setRegeneratingIndices(prev => {
-                    const next = new Set(prev);
-                    next.delete(index);
-                    return next;
-                });
-            }
-        }
-    };
-
-    const handleRefineClick = async (index: number) => {
-        if (onRefine) {
-            setRefiningIndices(prev => new Set(prev).add(index));
-            try {
-                await onRefine(index);
-            } finally {
-                setRefiningIndices(prev => {
                     const next = new Set(prev);
                     next.delete(index);
                     return next;
@@ -93,58 +74,18 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate, o
                     </div>
                     {state.phase === 'COMPLETE' && (
                         <div className="flex gap-2">
-                            {/* Master All Button - Only show if not all shots are refined */}
-                            {onRefineAll && state.artifacts.shots?.some(s => !s.selectedKeyframe) && (
-                                <button
-                                    onClick={async () => {
-                                        setIsRefiningAll(true);
-                                        try {
-                                            await onRefineAll();
-                                        } finally {
-                                            setIsRefiningAll(false);
-                                        }
-                                    }}
-                                    disabled={isRefiningAll}
-                                    className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-full shadow-lg transition-all flex items-center gap-2 disabled:opacity-50">
-                                    {isRefiningAll ? (
-                                        <>
-                                            <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                            Mastering All...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <SparklesIcon className="w-3 h-3" /> Master All (4K)
-                                        </>
-                                    )}
-                                </button>
-                            )}
                             <button
                                 onClick={async () => {
-                                    console.log('[PipelineVisualizer] Export button clicked.');
-                                    if (!state.artifacts.shots || state.artifacts.shots.length === 0) {
-                                        console.warn('[PipelineVisualizer] No shots to export.');
-                                        return;
-                                    }
+                                    if (!state.artifacts.shots) return;
                                     const btn = document.getElementById('export-btn');
                                     if (btn) btn.innerText = 'Stitching...';
                                     try {
-                                        console.log('[PipelineVisualizer] Importing stitchService...');
                                         const { stitchVideos } = await import('../services/stitchService');
-                                        console.log('[PipelineVisualizer] Preparing transitions...');
-                                        // Take all transitions except the last one (which corresponds to the last scene having no next scene)
-                                        // We map ALL scenes to preserve index alignment, then slice off the last element.
-                                        const transitions = state.artifacts.plan?.scenes?.map(s => s.transition).slice(0, -1) || [];
-                                        
-                                        console.log(`[PipelineVisualizer] Calling stitchVideos with ${state.artifacts.shots.length} shots and ${transitions.length} transitions.`);
-                                        const { url, extension } = await stitchVideos(state.artifacts.shots, transitions);
-                                        console.log('[PipelineVisualizer] Stitching complete. Triggering download...');
-                                        
-                                        const link = document.createElement('a');
-                                        link.href = url;
-                                        link.download = `veo-studio-production.${extension}`;
-                                        document.body.appendChild(link);
-                                        link.click();
-                                        document.body.removeChild(link);
+                                        const { url, extension } = await stitchVideos(state.artifacts.shots);
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.download = `veo_commercial_export.${extension}`;
+                                        a.click();
                                     } catch (e) {
                                         console.error(e);
                                         alert('Stitching failed');
@@ -237,23 +178,23 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate, o
                             </h3>
                             {state.phase === 'COMPLETE' && (
                                 <div className="flex items-center gap-2 text-indigo-400 text-xs">
-                                    <SparklesIcon className="w-3 h-3" /> All scenes consistent
+                                    <SparklesIcon className="w-3 h-3" /> All shots consistent
                                 </div>
                             )}
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 h-full">
-                            {state.artifacts.plan?.scenes?.map((scenePlan, index) => {
-                                const sceneResult = state.artifacts.shots?.[index];
-                                const isRegenerating = regeneratingIndices.has(index);
+                            {[0, 1, 2].map((index) => {
+                                const shotResult = state.artifacts.shots?.[index];
+                                const shotPlan = state.artifacts.plan?.shots?.[index];
 
                                 return (
                                     <div key={index} className="flex flex-col gap-2 relative group">
                                         <div className="aspect-[9/16] md:aspect-video bg-gray-900 rounded-lg overflow-hidden border border-gray-800 relative group">
-                                            {sceneResult && !isRegenerating ? (
+                                            {shotResult && !regeneratingIndices.has(index) ? (
                                                 <>
                                                     <video
-                                                        src={sceneResult.url}
+                                                        src={shotResult.url}
                                                         controls
                                                         autoPlay
                                                         loop
@@ -275,7 +216,7 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate, o
                                                                     <button 
                                                                         onClick={() => handleRegenerateClick(index)}
                                                                         className="flex-grow py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold rounded flex items-center justify-center gap-1">
-                                                                        <RefreshCwIcon className="w-3 h-3" /> Regenerate Take {sceneResult.version ? sceneResult.version + 1 : 2}
+                                                                        <RefreshCwIcon className="w-3 h-3" /> Regenerate Take {shotResult.version ? shotResult.version + 1 : 2}
                                                                     </button>
                                                                     <button 
                                                                         onClick={() => setShowFeedbackFor(null)}
@@ -285,42 +226,21 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate, o
                                                                 </div>
                                                             </div>
                                                         ) : (
-                                                            <div className="flex flex-col gap-2 w-full px-4">
-                                                                <button 
-                                                                    onClick={() => setShowFeedbackFor(index)}
-                                                                    className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold rounded-full shadow-xl flex items-center justify-center gap-2 transform transition-transform active:scale-95">
-                                                                    <MessageSquareIcon className="w-4 h-4" /> Add Feedback
-                                                                </button>
-                                                                
-                                                                {/* Only show Refine button if not already refined and not regenerating */}
-                                                                {!sceneResult.selectedKeyframe && (
-                                                                    <button 
-                                                                        onClick={() => handleRefineClick(index)}
-                                                                        disabled={refiningIndices.has(index)}
-                                                                        className="w-full px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-full shadow-xl flex items-center justify-center gap-2 transform transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
-                                                                        {refiningIndices.has(index) ? (
-                                                                            <>
-                                                                                <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                                                                Refining...
-                                                                            </>
-                                                                        ) : (
-                                                                            <>
-                                                                                <SparklesIcon className="w-4 h-4" /> Refine & Master (4K)
-                                                                            </>
-                                                                        )}
-                                                                    </button>
-                                                                )}
-                                                            </div>
+                                                            <button 
+                                                                onClick={() => setShowFeedbackFor(index)}
+                                                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-full shadow-xl flex items-center gap-2 transform transition-transform active:scale-95">
+                                                                <MessageSquareIcon className="w-4 h-4" /> Add Feedback
+                                                            </button>
                                                         )}
                                                     </div>
                                                 </>
                                             ) : (
                                                 <div className="w-full h-full flex flex-col items-center justify-center">
-                                                    {(state.phase === 'DRAFTING' || isRegenerating) ? (
+                                                    {(state.phase === 'DRAFTING' || regeneratingIndices.has(index)) ? (
                                                         <>
                                                             <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mb-2"></div>
                                                             <span className="text-[9px] text-indigo-400 uppercase animate-pulse">
-                                                                {isRegenerating ? `Rolling Take ${sceneResult?.version ? sceneResult.version + 1 : 2}...` : 'Rolling...'}
+                                                                {regeneratingIndices.has(index) ? `Rolling Take ${shotResult?.version ? shotResult.version + 1 : 2}...` : 'Rolling...'}
                                                             </span>
                                                         </>
                                                     ) : (
@@ -329,34 +249,26 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate, o
                                                 </div>
                                             )}
 
-                                            {sceneResult?.selectedKeyframe && (
-                                                <div className="absolute top-2 right-2 px-2 py-1 bg-emerald-600/90 backdrop-blur rounded text-[9px] font-bold text-white border border-white/20 flex items-center gap-1 shadow-lg">
-                                                    <SparklesIcon className="w-3 h-3" /> 4K MASTERED
-                                                </div>
-                                            )}
-                                            {/* Overlay Scene Info */}
-                                            {scenePlan && (
+                                            {/* Overlay Shot Info */}
+                                            {shotPlan && (
                                                 <div className="absolute top-2 left-2 px-2 py-1 bg-black/60 backdrop-blur rounded text-[9px] font-mono text-white border border-white/10 flex items-center gap-2">
-                                                    SCENE {index + 1} 
-                                                    <span className="text-gray-400">({scenePlan.duration_seconds}s)</span>
-                                                    {sceneResult?.version && sceneResult.version > 1 && (
-                                                        <span className="text-amber-400 font-bold border-l border-white/20 pl-2">TAKE {sceneResult.version}</span>
+                                                    SC01_SH0{index + 1} 
+                                                    {shotResult?.version && shotResult.version > 1 && (
+                                                        <span className="text-amber-400 font-bold border-l border-white/20 pl-2">TAKE {shotResult.version}</span>
                                                     )}
                                                 </div>
                                             )}
                                         </div>
-                                        {scenePlan && (
+                                        {shotPlan && (
                                             <div className="flex flex-col gap-1">
-                                                <div className="flex items-center gap-2 text-[10px] text-gray-400">
-                                                    <span>{scenePlan.segments.length} segment{scenePlan.segments.length > 1 ? 's' : ''}</span>
-                                                    <span className="text-gray-600">•</span>
-                                                    <span className="line-clamp-1">{scenePlan.segments[0]?.camera_movement || 'Static'}</span>
-                                                </div>
-                                                {sceneResult?.userFeedback && (
+                                                <p className="text-[10px] text-gray-400 line-clamp-2 leading-tight">
+                                                    {shotPlan.camera_movement}
+                                                </p>
+                                                {shotResult?.userFeedback && (
                                                     <div className="flex gap-1 items-start bg-amber-900/10 border border-amber-500/20 rounded p-1.5 mt-1">
                                                         <MessageSquareIcon className="w-2.5 h-2.5 text-amber-500 mt-0.5" />
                                                         <p className="text-[9px] text-amber-200/70 italic leading-tight">
-                                                            "{sceneResult.userFeedback}"
+                                                            "{shotResult.userFeedback}"
                                                         </p>
                                                     </div>
                                                 )}
