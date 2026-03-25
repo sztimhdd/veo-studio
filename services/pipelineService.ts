@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import { GoogleGenAI, Type, Schema, VideoGenerationReferenceImage, VideoGenerationReferenceType } from '@google/genai';
-import { AssetItem, DirectorPlan, SceneParams, ShotParams, VideoArtifact } from '../types';
+import { AssetItem, DirectorPlan, ShotParams, VideoArtifact } from '../types';
 
 
 // --- QUOTA MANAGEMENT ---
@@ -194,9 +194,8 @@ export const runRefinementPhase = async (
   const endFrameBlob = base64ToBlob(endFrameBase64, 'image/jpeg');
   
   // Determine prompt for this shot
-  const scene = plan.scenes?.find(s => s.id === draftVideo.shotId);
   const shot = plan.shots?.find(s => s.id === draftVideo.shotId);
-  const prompt = scene?.master_prompt || shot?.prompt || plan.shots?.[0]?.prompt || "Action occurring in the scene";
+  const prompt = shot?.prompt || plan.shots?.[0]?.prompt || "Action occurring in the scene";
 
   // 3. Upscale BOTH (Gemini Vision) in Parallel
   console.log('[Refining] Upscaling start and end frames...');
@@ -213,18 +212,6 @@ export const runRefinementPhase = async (
   
   return {
     ...finalVideo,
-    keyframes,
-    // Store dual anchors
-    anchorFrames: {
-      start: {
-        original: startFrameBase64,
-        upscaled: startUpscaledBase64
-      },
-      end: {
-        original: endFrameBase64,
-        upscaled: endUpscaledBase64
-      }
-    }
   };
 };
 
@@ -377,10 +364,10 @@ export const runDirectorAgent = async (
     }
 
     try {
-      const visualAnalysis = await aiService.client.models.generateContent({
-        model: 'gemini-3-pro-image-preview',
-        contents: { parts }
+      const model = getAI().getGenerativeModel({
+        model: 'gemini-3-pro-image-preview'
       });
+      const visualAnalysis = await model.generateContent({ contents: { parts } });
       visualContext = visualAnalysis.candidates?.[0]?.content?.parts?.[0]?.text || "";
       console.log('[Director] Visual analysis complete.');
     } catch (e) {
@@ -394,18 +381,18 @@ export const runDirectorAgent = async (
       subject_prompt: { type: Type.STRING, description: "Detailed visual description of the main character or subject. This will be used as a reference." },
       environment_prompt: { type: Type.STRING, description: "Detailed visual description of the background and atmosphere." },
       visual_style: { type: Type.STRING, description: "Cinematic style, lighting, and camera lens details (e.g., 'shot on 35mm film, volumetric lighting')." },
-      scenes: {
+      shots: {
         type: Type.ARRAY,
-        description: "Variable number of scenes (1-N) that tell the story. Each scene is max 8 seconds and can contain multiple timestamped segments.",
+        description: "Variable number of shots (1-N) that tell the story. Each shot is max 8 seconds and can contain multiple timestamped segments.",
         items: {
           type: Type.OBJECT,
           properties: {
             id: { type: Type.STRING },
             order: { type: Type.NUMBER },
-            duration_seconds: { type: Type.NUMBER, description: "Total duration of this scene (1-8 seconds). YOU decide based on narrative pacing." },
+            duration_seconds: { type: Type.NUMBER, description: "Total duration of this shot (1-8 seconds). YOU decide based on narrative pacing." },
             segments: {
               type: Type.ARRAY,
-              description: "Internal cuts within this scene using timestamp format [MM:SS-MM:SS]",
+              description: "Internal cuts within this shot using timestamp format [MM:SS-MM:SS]",
               items: {
                 type: Type.OBJECT,
                 properties: {
@@ -420,9 +407,9 @@ export const runDirectorAgent = async (
             master_prompt: { type: Type.STRING, description: "Combined prompt with timestamps for Veo 3.1. Format: [00:00-00:04] Shot description. [00:04-00:08] Next shot description." },
             transition: {
               type: Type.OBJECT,
-              description: "Transition effect to next shot (null for last scene). Use ONLY if this is NOT the last scene.",
+              description: "Transition effect to next shot (null for last shot). Use ONLY if this is NOT the last shot.",
               properties: {
-                type: { type: Type.STRING, description: "FFmpeg xfade type. Choose from: 'fade', 'fadeblack', 'dissolve', 'pixelize', 'wipeh', 'wiped'. Default: 'fade'." },
+                type: { type: Type.STRING, description: "FFmpeg xfade type. Choose from: 'fade', 'fadeblack', 'dissolve', 'pixelize', 'wipeleft', 'wiperight', 'wipeup', 'wipedown'. Default: 'fade'." },
                 duration: { type: Type.NUMBER, description: "Transition duration in seconds (0.2-1.5 recommended). Shorter = punchy, Longer = smooth." }
               },
               required: ["type", "duration"]
@@ -433,13 +420,13 @@ export const runDirectorAgent = async (
       },
       reasoning: { type: Type.STRING, description: "Brief explanation of why you chose this scene structure, pacing, and shot count to best serve the user's requirements." }
     },
-    required: ["subject_prompt", "environment_prompt", "visual_style", "scenes", "reasoning"]
+    required: ["subject_prompt", "environment_prompt", "visual_style", "shots", "reasoning"]
   };
 
     await waitForQuota('TEXT_GEN'); // Director uses Gemini 3 Pro (Text)
     const response = await getAI().models.generateContent({
 
-    model: 'gemini-3-pro-preview',
+    model: 'gemini-2.0-flash',
     contents: `You are an expert Film Director and Cinematographer with complete creative control.
                Analyze the user's requirements and break down the narrative into a DYNAMIC scene structure for Veo 3.1 video generation.
                
@@ -935,12 +922,14 @@ export const runShotDraftingAgent = async (
       if (!res.ok) throw new Error(`Failed to fetch video blob: ${res.statusText}`);
       const blob = await res.blob();
 
-      return {
-        url: URL.createObjectURL(blob),
+      const url = URL.createObjectURL(blob);
+      const artifact: VideoArtifact = {
+        url,
         blob,
         uri: videoUri,
         shotId: shot.id
       };
+      return artifact;
 
     } catch (e: any) {
       console.warn(`[Engineer] Attempt ${attempt} failed for shot ${shot.order}:`, e);
@@ -957,12 +946,12 @@ export const runShotDraftingAgent = async (
  * Generates a complete scene using timestamp prompting (1 API call, multiple internal cuts)
  */
 export const runSceneGenerationAgent = async (
-  scene: SceneParams,
+  shot: ShotParams,
   plan: DirectorPlan,
   assets: AssetItem[],
   feedback?: string
 ): Promise<VideoArtifact> => {
-  console.log(`[Engineer] Generating Scene ${scene.order} (${scene.duration_seconds}s)...${feedback ? ' (with feedback)' : ''}`);
+  console.log(`[Engineer] Generating Shot ${shot.order} (${shot.duration_seconds}s)...${feedback ? ' (with feedback)' : ''}`);
 
   const references: VideoGenerationReferenceImage[] = [];
 
@@ -981,7 +970,7 @@ export const runSceneGenerationAgent = async (
     });
   }
 
-  let finalPrompt = scene.master_prompt;
+  let finalPrompt = shot.prompt;
   
   if (feedback) {
     finalPrompt = `CRITICAL DIRECTOR NOTE: ${feedback}. ${finalPrompt}`;
@@ -990,10 +979,10 @@ export const runSceneGenerationAgent = async (
   // Enforce Veo 3.1 limit: Max 3 reference images
   const finalReferences = references.length > 0 ? references.slice(0, 3) : undefined;
   if (references.length > 3) {
-    console.log(`[Engineer] Scene ${scene.order}: ⚠️ TRUNCATING ${references.length} references to 3 to meet API limits. (Fix Applied)`);
+    console.log(`[Engineer] Shot ${shot.order}: ⚠️ TRUNCATING ${references.length} references to 3 to meet API limits. (Fix Applied)`);
   }
 
-  console.log(`[Engineer] Scene ${scene.order} Master Prompt: ${finalPrompt.substring(0, 100)}...`);
+  console.log(`[Engineer] Shot ${shot.order} Master Prompt: ${finalPrompt.substring(0, 100)}...`);
 
   // Retry loop for transient errors and safety fallbacks
   let lastError;
@@ -1040,7 +1029,7 @@ export const runSceneGenerationAgent = async (
       // Veo 3.1 Fast Reference Image mode requires > 1 image. 
       // If we have exactly 1, duplicate it as STYLE to satisfy the constraint.
       if (currentReferences && currentReferences.length === 1) {
-        console.log(`[Engineer] Scene ${scene.order}: Duplicating single reference to satisfy API constraint (>1).`);
+        console.log(`[Engineer] Shot ${shot.order}: Duplicating single reference to satisfy API constraint (>1).`);
         currentReferences = [
           currentReferences[0],
           { ...currentReferences[0], referenceType: VideoGenerationReferenceType.STYLE }
@@ -1070,20 +1059,20 @@ export const runSceneGenerationAgent = async (
       // Check for RAI/Safety filtering in response
       if (operation.response?.raiMediaFilteredReasons?.length > 0) {
           const reason = operation.response.raiMediaFilteredReasons.join(', ');
-          console.warn(`[Engineer] Scene ${scene.order}: Content filtered: ${reason}`);
+          console.warn(`[Engineer] Shot ${shot.order}: Content filtered: ${reason}`);
           // Throw specific error to trigger safety fallback logic in next loop
           throw new Error(`Safety Filter: ${reason}`);
       }
 
       if (operation.error) {
-        console.error(`[Engineer] Operation failed for scene ${scene.order}:`, operation.error);
+        console.error(`[Engineer] Operation failed for shot ${shot.order}:`, operation.error);
         throw new Error(`API Error: ${operation.error.message || 'Unknown API error'}`);
       }
 
       const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
       if (!videoUri) {
         // Double check for hidden safety reasons in the full object
-        console.error(`[Engineer] No video URI for scene ${scene.order}. Full Response:`, JSON.stringify(operation, null, 2));
+        console.error(`[Engineer] No video URI for shot ${shot.order}. Full Response:`, JSON.stringify(operation, null, 2));
         throw new Error(`Generation completed but returned no video. Likely Safety Filter or Model Refusal.`);
       }
 
@@ -1095,33 +1084,33 @@ export const runSceneGenerationAgent = async (
         url: URL.createObjectURL(blob),
         blob,
         uri: videoUri,
-        shotId: scene.id // Using shotId field for backward compatibility
+        shotId: shot.id // Using shotId field for backward compatibility
       };
 
     } catch (e: any) {
-      console.warn(`[Engineer] Attempt ${attempt} failed for scene ${scene.order}:`, e);
+      console.warn(`[Engineer] Attempt ${attempt} failed for shot ${shot.order}:`, e);
       lastError = e;
     }
   }
 
-  throw new Error(`Failed to generate scene ${scene.order} after ${maxAttempts} attempts.`);
+  throw new Error(`Failed to generate shot ${shot.order} after ${maxAttempts} attempts.`);
 };
 
 /**
  * PRODUCTION PIPELINE (Sequential)
- * Manages the sequential generation of scenes.
+ * Manages the sequential generation of shots.
  */
 export const runProductionPipeline = async (plan: DirectorPlan, assets: AssetItem[]): Promise<VideoArtifact[]> => {
-  console.log(`[Production] Initializing serial generation with ${plan.scenes.length} scenes...`);
+  console.log(`[Production] Initializing serial generation with ${plan.shots.length} shots...`);
 
   const results: VideoArtifact[] = [];
 
-  for (const scene of plan.scenes) {
+  for (const shot of plan.shots) {
     try {
-      const result = await runSceneGenerationAgent(scene, plan, assets);
+      const result = await runSceneGenerationAgent(shot, plan, assets);
       results.push(result);
     } catch (e) {
-      console.error(`[Production] Scene ${scene.order} failed:`, e);
+      console.error(`[Production] Shot ${shot.order} failed:`, e);
       throw e;
     }
   }

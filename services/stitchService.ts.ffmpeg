@@ -94,37 +94,40 @@ export class VideoStitcher {
       }
 
       // 2. Build Filter Complex
+      // We assume simple chaining: 0 -> 1 -> 2
+      // transitions[i] connects video[i] and video[i+1]
+      
       let filterComplex = '';
       let currentV = '[0:v]';
       let currentA = '[0:a]';
       let currentEnd = durations[0];
 
+      // If transitions array is shorter than gaps, pad with null
       const gaps = videos.length - 1;
       
       for (let i = 0; i < gaps; i++) {
         const nextIdx = i + 1;
         const transition = transitions[i];
         
-        // Map common AI typos
-        let type = transition?.type || 'fade';
-        if (type === ('wiped' as any)) type = 'wipeleft';
-        if (type === ('wipeh' as any)) type = 'wipeleft';
-
-        let duration = transition?.duration || 0.5; 
+        // Default to a short fade (0.5s) if undefined, to handle the "cut" smoothly in xfade
+        // Using 0.0s for xfade might be unstable, 0.1s is safe for a "cut" feel
+        const type = transition?.type || 'fade';
+        const duration = transition?.duration || 0.5; 
         
-        // Safety check: Transition duration cannot exceed clip duration
-        if (duration >= durations[i] || duration >= durations[nextIdx]) {
-           duration = Math.min(durations[i], durations[nextIdx]) / 4;
-           console.warn(`[StitchService] Scaling down transition duration to ${duration.toFixed(2)}s for safety.`);
-        }
-
+        // Offset logic:
+        // Start of transition (in the accumulated stream) = currentEnd - transition_duration
         const offset = currentEnd - duration;
+        
+        // New end time = offset + duration_of_next_clip
         currentEnd = offset + durations[nextIdx];
         
         const nextV = `[v${nextIdx}]`;
         const nextA = `[a${nextIdx}]`;
         
+        // Video: xfade
         filterComplex += `${currentV}[${nextIdx}:v]xfade=transition=${type}:duration=${duration}:offset=${offset.toFixed(3)}${nextV};`;
+        
+        // Audio: acrossfade
         filterComplex += `${currentA}[${nextIdx}:a]acrossfade=d=${duration}:c1=tri:c2=tri${nextA};`;
         
         currentV = nextV;
@@ -160,23 +163,23 @@ export class VideoStitcher {
       await cleanup();
       return blob;
 
-    } catch (e: any) {
+    } catch (e) {
       console.error('[StitchService] Error:', e);
-      // Detailed FS Error Logging
-      if (e.name === 'ErrnoError') {
-         console.error('[StitchService] FS Sync Error. Check virtual memory and file naming.');
-      }
       await cleanup();
       throw e;
     }
   }
 }
 
+/**
+ * Convenience helper for the UI
+ */
 export const stitchVideos = async (
   videos: VideoArtifact[], 
   transitions?: (TransitionSpec | null | undefined)[]
 ): Promise<{ url: string, extension: string, blob: Blob }> => {
   const stitcher = new VideoStitcher();
+  // Ensure we have a valid array
   const trans = transitions || [];
   
   const blob = await stitcher.stitchWithTransitions(videos, trans);

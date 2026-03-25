@@ -81,7 +81,8 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate })
                                     if (btn) btn.innerText = 'Stitching...';
                                     try {
                                         const { stitchVideos } = await import('../services/stitchService');
-                                        const { url, extension } = await stitchVideos(state.artifacts.shots);
+                                        const transitions = state.artifacts.plan?.shots.map(s => s.transition) || [];
+                                        const { url, extension } = await stitchVideos(state.artifacts.shots, transitions);
                                         const a = document.createElement('a');
                                         a.href = url;
                                         a.download = `veo_commercial_export.${extension}`;

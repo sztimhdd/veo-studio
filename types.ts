@@ -90,12 +90,18 @@ export interface ProjectOptions {
   aspectRatio: '16:9' | '9:16';
 }
 
+export interface TransitionSpec {
+  type: 'fade' | 'fadeblack' | 'fadewhite' | 'dissolve' | 'wipeleft' | 'wiperight' | 'wipeup' | 'wipedown' | 'pixelize';
+  duration: number;
+}
+
 export interface ShotParams {
   id: string;
   order: number;
   prompt: string;
   camera_movement: string;
   duration_seconds: number;
+  transition?: TransitionSpec;
 }
 
 export interface DirectorPlan {

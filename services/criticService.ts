@@ -7,7 +7,13 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { VideoArtifact, DirectorPlan, ShotEvaluation, EvalReport } from '../types';
 
 // Initialize AI (API key handled by env)
-const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
+let genAI: any = null;
+const getAI = () => {
+  if (genAI) return genAI;
+  const apiKey = (typeof window !== 'undefined' && (window as any).aistudio?.getSelectedApiKey()) || import.meta.env.VITE_GEMINI_API_KEY;
+  genAI = new GoogleGenAI(apiKey);
+  return genAI;
+};
 
 // Quota tracking for Critic (Gemini 3 Pro - Text)
 let lastCriticCallTime = 0;
@@ -50,8 +56,10 @@ export const runContinuitySupervisor = async (
     
     await waitForCriticQuota();
     
-    const response = await getAI().models.generateContent({
-      model: 'gemini-3-pro-preview',
+    const model = getAI().getGenerativeModel({
+      model: 'gemini-3-pro-preview'
+    });
+    const response = await model.generateContent({
       contents: [
         {
           text: `You are a professional film critic and continuity supervisor. Analyze this video shot for quality and consistency.
@@ -80,7 +88,7 @@ export const runContinuitySupervisor = async (
           }
         }
       ],
-      config: {
+      generationConfig: {
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
