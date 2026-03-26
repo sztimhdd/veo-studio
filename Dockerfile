@@ -16,8 +16,9 @@ COPY . .
 ARG GEMINI_API_KEY
 RUN echo "VITE_GEMINI_API_KEY=${GEMINI_API_KEY}" > .env && \
     echo "GEMINI_API_KEY=${GEMINI_API_KEY}" >> .env && \
+    cp .env .env.production && \
     echo "--- Build env check ---" && \
-    test -n "${GEMINI_API_KEY}" && echo "API_KEY: SET (length=$(echo -n ${GEMINI_API_KEY} | wc -c))" || echo "API_KEY: MISSING!"
+    if [ -z "${GEMINI_API_KEY}" ]; then echo "API_KEY: MISSING!"; else echo "API_KEY: SET (length=$(echo -n ${GEMINI_API_KEY} | wc -c))"; fi
 
 RUN npm run build
 

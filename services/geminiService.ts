@@ -3,22 +3,20 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 import {
-  GoogleGenAI,
   Video,
   VideoGenerationReferenceImage,
   VideoGenerationReferenceType,
 } from '@google/genai';
-import {GenerateVideoParams, GenerationMode} from '../types';
+import { GenerateVideoParams, GenerationMode } from '../types';
+import { aiService } from './aiService';
 
-// Fix: API key is now handled by process.env.API_KEY, so it's removed from parameters.
 export const generateVideo = async (
   params: GenerateVideoParams,
 ): Promise<{objectUrl: string; blob: Blob; uri: string; video: Video}> => {
   console.log('Starting video generation with params:', params);
 
-  // Fix: API key must be obtained using the consistent fallback chain.
-  const apiKey = (typeof window !== 'undefined' && (window as any).aistudio?.getSelectedApiKey()) || import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.API_KEY;
-  const ai = new GoogleGenAI({apiKey});
+  // Use the centralized aiService client — API key is handled there.
+  const ai = aiService.client;
 
   const config: any = {
     numberOfVideos: 1,
@@ -134,8 +132,13 @@ export const generateVideo = async (
     const url = decodeURIComponent(videoObject.uri);
     console.log('Fetching video from:', url);
 
-    // Fix: The API key for fetching the video must also come from process.env.API_KEY.
-    const res = await fetch(`${url}&key=${process.env.API_KEY}`);
+    // Use the same resolved API key via the centralized service
+    const resolvedApiKey =
+      (typeof window !== 'undefined' && (window as any).aistudio?.getSelectedApiKey()) ||
+      import.meta.env.VITE_GEMINI_API_KEY ||
+      process.env.GEMINI_API_KEY ||
+      process.env.API_KEY;
+    const res = await fetch(`${url}&key=${resolvedApiKey}`);
 
     if (!res.ok) {
       throw new Error(`Failed to fetch video: ${res.status} ${res.statusText}`);

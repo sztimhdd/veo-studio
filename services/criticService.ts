@@ -3,17 +3,12 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import { GoogleGenAI, Type } from '@google/genai';
+import { Type } from '@google/genai';
 import { VideoArtifact, DirectorPlan, ShotEvaluation, EvalReport } from '../types';
+import { aiService } from './aiService';
 
-// Initialize AI (API key handled by env)
-let genAI: any = null;
-const getAI = () => {
-  if (genAI) return genAI;
-  const apiKey = (typeof window !== 'undefined' && (window as any).aistudio?.getSelectedApiKey()) || import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.API_KEY;
-  genAI = new GoogleGenAI(apiKey);
-  return genAI;
-};
+// Use the centralized aiService — API key and SDK init handled there.
+const getAI = () => aiService.client;
 
 // Quota tracking for Critic (Gemini 3 Pro - Text)
 let lastCriticCallTime = 0;
@@ -56,10 +51,8 @@ export const runContinuitySupervisor = async (
     
     await waitForCriticQuota();
     
-    const model = getAI().getGenerativeModel({
-      model: 'gemini-3-pro-preview'
-    });
-    const response = await model.generateContent({
+    const response = await getAI().models.generateContent({
+      model: 'gemini-2.0-flash',
       contents: [
         {
           text: `You are a professional film critic and continuity supervisor. Analyze this video shot for quality and consistency.
@@ -88,7 +81,7 @@ export const runContinuitySupervisor = async (
           }
         }
       ],
-      generationConfig: {
+      config: {
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,

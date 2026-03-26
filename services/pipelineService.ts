@@ -2,29 +2,17 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import { GoogleGenAI, Type, Schema, VideoGenerationReferenceImage, VideoGenerationReferenceType } from '@google/genai';
+import { Type, Schema, VideoGenerationReferenceImage, VideoGenerationReferenceType } from '@google/genai';
 import { AssetItem, DirectorPlan, ShotParams, VideoArtifact } from '../types';
+import { aiService } from './aiService';
 
 
 // --- QUOTA MANAGEMENT ---
 // Implements Token Bucket / Leaky Bucket style rate limiting based on User's verified Quotas.
 
 
-let genAI: any = null;
-export const getAI = () => {
-  if (genAI) return genAI;
-  const apiKey = (typeof window !== 'undefined' && (window as any).aistudio?.getSelectedApiKey()) || import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.API_KEY;
-  if (!apiKey) {
-    // Return a dummy object if key missing to prevent top-level crash, 
-    // real error will be thrown on first model call
-    return {
-      getGenerativeModel: () => ({ generateContent: () => { throw new Error("API Key not configured"); } }),
-      models: { generateContent: () => { throw new Error("API Key not configured"); } }
-    };
-  }
-  genAI = new GoogleGenAI(apiKey);
-  return genAI;
-};
+// Use the centralized aiService — all API key resolution is handled there.
+export const getAI = () => aiService.client;
 
 const QUOTAS = {
   VIDEO_GEN: {
@@ -377,10 +365,10 @@ export const runDirectorAgent = async (
     }
 
     try {
-      const model = getAI().getGenerativeModel({
-        model: 'gemini-3-pro-image-preview'
+      const visualAnalysis = await getAI().models.generateContent({
+        model: 'gemini-2.0-flash',
+        contents: { parts },
       });
-      const visualAnalysis = await model.generateContent({ contents: { parts } });
       visualContext = visualAnalysis.candidates?.[0]?.content?.parts?.[0]?.text || "";
       console.log('[Director] Visual analysis complete.');
     } catch (e) {
@@ -931,7 +919,8 @@ export const runShotDraftingAgent = async (
         throw new Error(`Generation completed but returned no video. Check safety filters or quota.`);
       }
 
-      const res = await fetch(`${videoUri}&key=${import.meta.env.VITE_GEMINI_API_KEY}`);
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.API_KEY;
+      const res = await fetch(`${videoUri}&key=${apiKey}`);
       if (!res.ok) throw new Error(`Failed to fetch video blob: ${res.statusText}`);
       const blob = await res.blob();
 
