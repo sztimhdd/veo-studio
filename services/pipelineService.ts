@@ -794,7 +794,10 @@ export const runShotDraftingAgent = async (
     });
   }
 
-  let finalPrompt = `${shot.prompt}. Camera: ${shot.camera_movement}.`;
+  let finalPrompt = (shot.master_prompt || shot.prompt || "").trim();
+  if (shot.camera_movement) {
+    finalPrompt += ` Camera: ${shot.camera_movement}.`;
+  }
   
   // If the Director agent followed instructions, shot.prompt already contains subject/env details.
   // But to be safe and enforce the 5-part formula, we can reconstruct it if needed.
@@ -972,7 +975,7 @@ export const runSceneGenerationAgent = async (
     });
   }
 
-  let finalPrompt = shot.prompt;
+  let finalPrompt = shot.master_prompt || shot.prompt || "";
   
   if (feedback) {
     finalPrompt = `CRITICAL DIRECTOR NOTE: ${feedback}. ${finalPrompt}`;
@@ -984,7 +987,8 @@ export const runSceneGenerationAgent = async (
     console.log(`[Engineer] Shot ${shot.order}: ⚠️ TRUNCATING ${references.length} references to 3 to meet API limits. (Fix Applied)`);
   }
 
-  console.log(`[Engineer] Shot ${shot.order} Master Prompt: ${finalPrompt.substring(0, 100)}...`);
+  const displayPrompt = finalPrompt || "[No Prompt Provided]";
+  console.log(`[Engineer] Shot ${shot.order} Master Prompt: ${displayPrompt.substring(0, 100)}...`);
 
   // Retry loop for transient errors and safety fallbacks
   let lastError;
@@ -1078,7 +1082,8 @@ export const runSceneGenerationAgent = async (
         throw new Error(`Generation completed but returned no video. Likely Safety Filter or Model Refusal.`);
       }
 
-      const res = await fetch(`${videoUri}&key=${import.meta.env.VITE_GEMINI_API_KEY}`);
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.API_KEY;
+      const res = await fetch(`${videoUri}&key=${apiKey}`);
       if (!res.ok) throw new Error(`Failed to fetch video blob: ${res.statusText}`);
       const blob = await res.blob();
 
@@ -1226,7 +1231,8 @@ export const runMasteringAgent = async (plan: DirectorPlan, startAnchor: Blob, e
   const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
   if (!videoUri) throw new Error("Master generation failed");
 
-  const res = await fetch(`${videoUri}&key=${import.meta.env.VITE_GEMINI_API_KEY}`);
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.API_KEY;
+  const res = await fetch(`${videoUri}&key=${apiKey}`);
   const blob = await res.blob();
 
   return {

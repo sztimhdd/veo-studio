@@ -98,7 +98,8 @@ export interface TransitionSpec {
 export interface ShotParams {
   id: string;
   order: number;
-  prompt: string;
+  prompt?: string;
+  master_prompt: string;
   camera_movement: string;
   duration_seconds: number;
   transition?: TransitionSpec;
