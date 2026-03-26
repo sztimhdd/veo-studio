@@ -137,7 +137,7 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate })
                                         <span className="text-gray-400 font-bold block text-[10px] uppercase mb-1">
                                             Shot {shot.order}: {shot.camera_movement}
                                         </span>
-                                        <p className="text-gray-300 text-xs">{shot.prompt}</p>
+                                        <p className="text-gray-300 text-xs">{shot.master_prompt || shot.prompt}</p>
                                     </div>
                                 ))}
                             </div>
@@ -263,7 +263,7 @@ const PipelineVisualizer: React.FC<PipelineVisualizerProps> = ({ onRegenerate })
                                         {shotPlan && (
                                             <div className="flex flex-col gap-1">
                                                 <p className="text-[10px] text-gray-400 line-clamp-2 leading-tight">
-                                                    {shotPlan.camera_movement}
+                                                    {shotPlan.master_prompt || shotPlan.prompt || shotPlan.camera_movement}
                                                 </p>
                                                 {shotResult?.userFeedback && (
                                                     <div className="flex gap-1 items-start bg-amber-900/10 border border-amber-500/20 rounded p-1.5 mt-1">

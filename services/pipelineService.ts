@@ -366,7 +366,7 @@ export const runDirectorAgent = async (
 
     try {
       const visualAnalysis = await getAI().models.generateContent({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-3.1-pro-preview',
         contents: { parts },
       });
       visualContext = visualAnalysis.candidates?.[0]?.content?.parts?.[0]?.text || "";
@@ -427,7 +427,7 @@ export const runDirectorAgent = async (
     await waitForQuota('TEXT_GEN'); // Director uses Gemini 3 Pro (Text)
     const response = await getAI().models.generateContent({
 
-    model: 'gemini-2.0-flash',
+    model: 'gemini-3.1-pro-preview',
     contents: `You are an expert Film Director and Cinematographer with complete creative control.
                Analyze the user's requirements and break down the narrative into a DYNAMIC scene structure for Veo 3.1 video generation.
                

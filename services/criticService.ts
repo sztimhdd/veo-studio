@@ -52,7 +52,7 @@ export const runContinuitySupervisor = async (
     await waitForCriticQuota();
     
     const response = await getAI().models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-3.1-pro-preview',
       contents: [
         {
           text: `You are a professional film critic and continuity supervisor. Analyze this video shot for quality and consistency.

@@ -75,7 +75,7 @@ export type PipelinePhase =
 
 export enum DirectorModel {
   FLASH = 'gemini-2.0-flash',
-  PRO = 'gemini-2.5-pro-preview-03-25',
+  PRO = 'gemini-3.1-pro-preview',
 }
 
 export enum VideoModel {
