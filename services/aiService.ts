@@ -19,12 +19,16 @@ class AIService {
   get client(): GoogleGenAI {
     if (this._client) return this._client;
 
-    // In Vite, environment variables are available on import.meta.env
-    // We prioritize VITE_GEMINI_API_KEY but also support GEMINI_API_KEY via vite.config.ts define
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    // In Vite, VITE_* env vars are inlined at build time via import.meta.env.
+    // Fallback to process.env (defined in vite.config.ts define block) for Docker builds
+    // where .env files are excluded via .dockerignore.
+    const apiKey =
+      import.meta.env.VITE_GEMINI_API_KEY ||
+      process.env.GEMINI_API_KEY ||
+      process.env.API_KEY;
 
     if (!apiKey) {
-      const errorMsg = 'Google API Key not found. Please ensure VITE_GEMINI_API_KEY or GEMINI_API_KEY is set in your .env file and restart the dev server.';
+      const errorMsg = 'Google API Key not found. Ensure GEMINI_API_KEY is set in GitHub Secrets.';
       console.error(`[AIService] ${errorMsg}`);
       // Throwing here will be caught by the pipeline's error handling
       throw new Error(errorMsg);

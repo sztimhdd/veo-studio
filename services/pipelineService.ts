@@ -13,7 +13,7 @@ import { AssetItem, DirectorPlan, ShotParams, VideoArtifact } from '../types';
 let genAI: any = null;
 export const getAI = () => {
   if (genAI) return genAI;
-  const apiKey = (typeof window !== 'undefined' && (window as any).aistudio?.getSelectedApiKey()) || import.meta.env.VITE_GEMINI_API_KEY;
+  const apiKey = (typeof window !== 'undefined' && (window as any).aistudio?.getSelectedApiKey()) || import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.API_KEY;
   if (!apiKey) {
     // Return a dummy object if key missing to prevent top-level crash, 
     // real error will be thrown on first model call

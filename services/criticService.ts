@@ -10,7 +10,7 @@ import { VideoArtifact, DirectorPlan, ShotEvaluation, EvalReport } from '../type
 let genAI: any = null;
 const getAI = () => {
   if (genAI) return genAI;
-  const apiKey = (typeof window !== 'undefined' && (window as any).aistudio?.getSelectedApiKey()) || import.meta.env.VITE_GEMINI_API_KEY;
+  const apiKey = (typeof window !== 'undefined' && (window as any).aistudio?.getSelectedApiKey()) || import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.API_KEY;
   genAI = new GoogleGenAI(apiKey);
   return genAI;
 };

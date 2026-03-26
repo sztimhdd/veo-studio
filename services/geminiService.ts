@@ -16,8 +16,9 @@ export const generateVideo = async (
 ): Promise<{objectUrl: string; blob: Blob; uri: string; video: Video}> => {
   console.log('Starting video generation with params:', params);
 
-  // Fix: API key must be obtained from process.env.API_KEY as per guidelines.
-  const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
+  // Fix: API key must be obtained using the consistent fallback chain.
+  const apiKey = (typeof window !== 'undefined' && (window as any).aistudio?.getSelectedApiKey()) || import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.API_KEY;
+  const ai = new GoogleGenAI({apiKey});
 
   const config: any = {
     numberOfVideos: 1,
